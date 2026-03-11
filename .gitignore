@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+
+# Data and training artifacts
+data/
+datasets/
+models/
+runs/
+results/
+inference/
+logs/
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+service-account-key.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
