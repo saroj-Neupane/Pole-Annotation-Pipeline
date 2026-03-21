@@ -2,12 +2,14 @@
 
 A multi-stage computer vision system for automated detection, calibration, and annotation of electric utility pole infrastructure from field photographs. The pipeline combines YOLOv11 object detection with HRNet-W32 keypoint localization across 13+ specialized models to measure pole heights, detect equipment, and localize wire attachments.
 
+**[Live Demo](https://pole-annotation-app-gyq2qukkaq-uc.a.run.app/)** — External deployment; app source is not included in this repository
+
 ## Sample Results
 
 <p align="center">
-  <img src="assets/Pole_Calibration.png" width="270" alt="Calibration: ruler markings + pole top detection"/>
-  <img src="assets/Pole_Annotation.png" width="270" alt="Annotation: equipment + attachment detection"/>
-  <img src="assets/Midspan_Calibration.png" width="270" alt="Midspan ruler calibration"/>
+  <img src="assets/Pole_Calibration.jpg" width="270" alt="Calibration: ruler markings + pole top detection"/>
+  <img src="assets/Pole_Annotation.jpg" width="270" alt="Annotation: equipment + attachment detection"/>
+  <img src="assets/Midspan_Calibration.jpg" width="270" alt="Midspan ruler calibration"/>
 </p>
 <p align="center">
   <em>Left: Calibration pipeline — ruler markings (2.5–16.5 ft) and pole top keypoints. Center: Annotation pipeline — equipment and attachment detection with keypoints. Right: Midspan calibration on a different photo type.</em>
@@ -52,6 +54,11 @@ A multi-stage computer vision system for automated detection, calibration, and a
 - **Keypoint interpolation**: Polynomial fitting on confident ruler markings with linear fallback for occluded points
 
 ## Results
+
+The metrics below are reported results from prior training/evaluation runs. The
+repository currently does **not** include datasets, trained weights, or saved
+evaluation outputs, so these numbers are documentation rather than artifacts
+that can be verified from the checked-in files alone.
 
 ### Calibration Pipeline
 
@@ -149,10 +156,30 @@ A multi-stage computer vision system for automated detection, calibration, and a
 pip install -r requirements.txt
 ```
 
+`requirements.txt` covers the core runtime stack for training/inference, but
+several scripts and notebooks import additional packages that are not currently
+pinned there, including:
+
+```bash
+pip install matplotlib pandas scikit-learn tqdm pyyaml
+```
+
 Download pretrained HRNet weights:
 ```bash
 python scripts/download_hrnet_pretrained.py
 ```
+
+## Repository State
+
+This repository contains the pipeline code, notebooks, and helper scripts, but
+large artifacts are intentionally not versioned:
+
+- `data/` is a placeholder in git; raw pole/midspan photos and labels are not included
+- `models/` is a placeholder in git; pretrained/downloaded weights are not included
+- `datasets/`, `runs/`, and `results/` are generated locally and are not present in a fresh clone
+
+Most training, dataset-preparation, and evaluation commands in this README
+assume you already have the source data available locally under `data/`.
 
 ## Training
 
@@ -166,7 +193,10 @@ python train.py --model equipment_detection --warm-start --epochs 50
 python scripts/train_all_overnight.py
 ```
 
-Datasets should be organized in `datasets/<model_name>/` with YOLO format (for detection) or custom keypoint format (for HRNet models). Use `scripts/prepare_dataset.py` to convert from raw labels.
+Prepared datasets are expected under `datasets/<model_name>/` with YOLO format
+(for detection) or the repository's custom keypoint format (for HRNet models).
+Use `scripts/prepare_dataset.py` to build them from local raw labels once the
+source data exists under `data/`.
 
 Weights are saved to `runs/<model_name>/weights/best.pt` (YOLO) or `best.pth` (HRNet).
 
