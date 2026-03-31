@@ -28,30 +28,100 @@ A multi-stage computer vision system for automated calibration and annotation of
   <em>Left: Calibration pipeline with ruler-marking keypoints (2.5-16.5 ft) and pole-top localization. Center: Annotation pipeline with equipment and wire-attachment localization. Right: Midspan calibration.</em>
 </p>
 
-## Pipeline Architecture
+## Inference Pipeline
+
+Runtime inference flow on pole/midspan photos.
 
 ```mermaid
 flowchart TD
     A[Pole Photo]
     B[Midspan Photo]
+    C[Pole Detection<br/>YOLOv11s<br/>full image]
 
-    A --> C[Pole Detection<br/>YOLOv11s<br/>full image]
-    A --> D[Ruler Detection<br/>YOLOv11s<br/>full image]
+    subgraph PATHS[ ]
+        direction LR
+
+        subgraph ANN[Annotation Path]
+            direction TB
+            K[Shared Upper 70% Pole Crop<br/>2:5 aspect ratio]
+            L[Equipment Detection<br/>YOLOv11s<br/>4 classes]
+            M[Attachment Detection<br/>YOLOv11s<br/>6 classes]
+            N[Per-equipment Keypoints<br/>HRNet-W32]
+            O[Per-attachment Keypoints<br/>HRNet-W32]
+            P[Annotation Outputs]
+            K --> L
+            K --> M
+            L --> N
+            M --> O
+            N --> P
+            O --> P
+        end
+
+        subgraph CAL[Calibration Path]
+            direction TB
+            D[Ruler Detection<br/>YOLOv11s<br/>full image]
+            E[Ruler Crop]
+            F[Ruler Marking Keypoints<br/>HRNet-W32<br/>5 keypoints]
+            G[Pole Crop]
+            H[Pole Top Keypoint<br/>HRNet-W32<br/>upper 10% of pole crop]
+            J[Calibration Outputs<br/>downstream height estimation]
+            D --> E
+            E --> F
+            F --> J
+            G --> H
+            H --> J
+        end
+    end
+
+    A --> C
+    A --> D
     B --> D
+    C --> K
+    C --> G
+    style PATHS fill:transparent,stroke:transparent
+```
 
-    D --> E[Ruler Crop]
-    E --> F[Ruler Marking Keypoints<br/>HRNet-W32<br/>5 keypoints]
-    C --> G[Pole Crop]
-    G --> H[Pole Top Keypoint<br/>HRNet-W32<br/>upper 10% of pole crop]
-    F --> I[PPI / calibration from ruler keypoints]
-    H --> J[Calibration outputs<br/>downstream height estimation]
-    I --> J
+## Training Pipeline
 
-    C --> K[Shared Upper 70% Pole Crop<br/>2:5 aspect ratio]
-    K --> L[Equipment Detection<br/>YOLOv11s<br/>4 classes]
-    K --> M[Attachment Detection<br/>YOLOv11s<br/>6 classes]
-    L --> N[Per-equipment Keypoints<br/>HRNet-W32]
-    M --> O[Per-attachment Keypoints<br/>HRNet-W32]
+Model development flow from data preparation to saved checkpoints.
+
+```mermaid
+flowchart TD
+    A[Raw Data<br/>Pole + Midspan Photos/Labels]
+    B[Prepare Datasets<br/>scripts/prepare_dataset.py]
+    C[Split Manifest<br/>create or update split_manifest.json]
+
+    A --> B
+    B --> C
+
+    subgraph DSETS[Dataset Build]
+        direction LR
+        D1[Calibration Datasets<br/>pole_detection, ruler_detection,<br/>ruler_marking_detection, pole_top_detection]
+        D2[Detection Datasets<br/>equipment_detection, attachment_detection]
+        D3[Keypoint Datasets<br/>10 class-specific keypoint datasets]
+    end
+
+    C --> D1
+    C --> D2
+    C --> D3
+
+    E[Training Entry]
+    D1 --> E
+    D2 --> E
+    D3 --> E
+
+    E --> F1[Single Model Training<br/>train.py --model model_name]
+    E --> F2[Batch Training<br/>scripts/train_all_overnight.py]
+
+    F1 --> G1{Model Family}
+    G1 --> H1[YOLO Trainers<br/>detection models]
+    G1 --> H2[HRNet Trainers<br/>keypoint models]
+
+    F2 --> I1[Sequential Run<br/>skip trained unless --force]
+    I1 --> F1
+
+    H1 --> J[Save Best Weights<br/>runs/model_name/weights/best.pt]
+    H2 --> K[Save Best Weights<br/>runs/model_name/weights/best.pth]
 ```
 
 ### Key Design Decisions
@@ -159,6 +229,8 @@ that can be verified from the checked-in files alone.
 ```
 
 ## Setup
+
+Prerequisites: Python 3.10+ (CUDA-capable GPU recommended for training speed).
 
 ```bash
 pip install -r requirements.txt
