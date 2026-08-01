@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pole Annotation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html {
+            height: 100%;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.5;
+            color: #111827;
+            background: #f3f4f6;
+            min-height: 100%;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Navigation */
+        nav {
+            flex-shrink: 0;
+            background: #1a1a1a;
+            color: #D4AF37;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            padding: 24px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .public-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            flex-shrink: 0;
+        }
+        .public-logo-icon {
+            height: 56px;
+            width: auto;
+            object-fit: contain;
+        }
+        .public-logo-wordmark {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #D4AF37;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+            line-height: 1.1;
+        }
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-container[hidden] {
+            display: none !important;
+        }
+        .logo-img {
+            height: 48px;
+            width: auto;
+            max-width: 150px;
+            object-fit: contain;
+        }
+        .logo-separator {
+            width: 1px;
+            height: 40px;
+            background: rgba(212, 175, 55, 0.3);
+            margin: 0 12px;
+        }
+        .nav-links {
+            display: flex;
+            gap: 0;
+            align-items: center;
+        }
+        .nav-links a {
+            color: #D4AF37;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.85rem;
+            padding: 6px 16px;
+            border-radius: 4px;
+            min-width: 80px;
+            text-align: center;
+            transition: color 0.2s ease, background 0.2s ease;
+        }
+        .nav-links a:hover {
+            color: #E5C158;
+            background: rgba(212, 175, 55, 0.1);
+        }
+        .nav-links a.active {
+            color: #E5C158;
+            font-weight: 600;
+        }
+        .nav-links-main {
+            margin-left: auto;
+        }
+
+        /* Hamburger menu */
+        .hamburger {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px;
+            margin-left: auto;
+        }
+        .hamburger span {
+            display: block;
+            width: 24px;
+            height: 2px;
+            background: #D4AF37;
+            margin: 5px 0;
+            border-radius: 2px;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+        .hamburger.open span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+        .hamburger.open span:nth-child(2) {
+            opacity: 0;
+        }
+        .hamburger.open span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .home-main {
+            flex: 1 0 auto;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+        }
+
+        /* Span showcase (pole-mid-pole strip) */
+        .span-showcase { max-width: 1150px; margin: 0 auto; }
+        .span-showcase-strip {
+            display: flex; gap: 5px; justify-content: center; align-items: stretch;
+            height: min(58vh, 620px); min-height: 300px;
+            background: #1f2937; border-radius: 14px; padding: 6px; overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        }
+        .showcase-photo { position: relative; height: 100%; min-width: 0; line-height: 0; }
+        .showcase-photo img { height: 100%; width: auto; max-width: 100%; object-fit: contain; display: block; border-radius: 6px; }
+        .showcase-photo svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+        .showcase-photo .showcase-role {
+            position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+            background: rgba(255,255,255,0.9); color: #1f2937; border-radius: 999px;
+            font-size: 0.66rem; font-weight: 700; padding: 2px 9px; z-index: 2; line-height: 1.4;
+        }
+        .span-showcase-caption { text-align: center; color: #6b7280; font-size: 0.85rem; margin-top: 10px; }
+
+        /* Marketing hero */
+        .marketing-hero {
+            flex-shrink: 0;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+            color: #D4AF37;
+            padding: 44px 20px 48px;
+            text-align: center;
+            border-bottom: 2px solid #D4AF37;
+            position: relative;
+            overflow: hidden;
+        }
+        .marketing-hero::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(212, 175, 55, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .marketing-hero-inner {
+            position: relative;
+            z-index: 1;
+            max-width: 720px;
+            margin: 0 auto;
+        }
+        .marketing-hero h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 12px;
+            color: #D4AF37;
+        }
+        .hero-subtitle {
+            font-size: 1.05rem;
+            color: rgba(255, 255, 255, 0.75);
+            line-height: 1.5;
+            margin-bottom: 16px;
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .hero-stat {
+            display: inline-block;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #E5C158;
+            line-height: 1.4;
+        }
+
+        .hero-steps {
+            display: flex; justify-content: center; align-items: center; gap: 14px;
+            font-size: 1.1rem; font-weight: 700; color: #E5C158; flex-wrap: wrap;
+        }
+        .hero-steps .step-arrow { color: rgba(255,255,255,0.45); font-weight: 400; }
+
+        /* Live three-pass showcase */
+        .live-caption { text-align: center; color: #6b7280; font-size: 0.9rem; margin-bottom: 18px; }
+        /* break out of the content column: the span view gets 80% of the page width */
+        .live-stage {
+            width: 80vw; max-width: none;
+            margin: 0 0 34px 50%; transform: translateX(-50%);
+        }
+        .live-stage h3 { font-size: 1.15rem; font-weight: 700; color: #1a1a1a; margin-bottom: 2px; }
+        .stage-num {
+            display: inline-flex; width: 24px; height: 24px; border-radius: 50%;
+            background: #D4AF37; color: #1a1a1a; font-size: 0.85rem; font-weight: 800;
+            align-items: center; justify-content: center; margin-right: 8px; vertical-align: 2px;
+        }
+        .stage-note { color: #6b7280; font-size: 0.85rem; margin-bottom: 10px; }
+        .phase-dot {
+            display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+            background: #D4AF37; margin-right: 9px; vertical-align: 1px;
+        }
+        .phase-dot.pulsing { animation: pulse 1s ease-in-out infinite; }
+        /* progressive label reveal: each new marker pops in on its own beat */
+        @keyframes markerPop { from { opacity: 0; } to { opacity: 1; } }
+        .marker-pop { opacity: 0; animation: markerPop 0.16s ease-out forwards; }
+        @keyframes ribbonPop { from { opacity: 0; } to { opacity: 0.7; } }
+        .ribbon-pop { opacity: 0; animation: ribbonPop 0.2s ease-out forwards; }
+        .live-strip {
+            position: relative; display: flex; gap: 5px; justify-content: center; align-items: stretch;
+            /* height is set by JS to fill the 80vw strip with the span photos;
+               this is only the pre-load fallback */
+            height: min(52vh, 560px); min-height: 260px;
+            background: #1f2937; border-radius: 14px; padding: 6px; overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        }
+        .live-photo { position: relative; height: 100%; min-width: 0; line-height: 0; }
+        .live-photo img { height: 100%; width: auto; max-width: 100%; object-fit: contain; display: block; border-radius: 6px; }
+        .live-photo svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+        /* before/after flash: overlays fade out together, photo stays */
+        .live-photo svg, .live-ribbons { transition: opacity 0.45s ease; }
+        .live-strip.bare .live-photo svg, .live-strip.bare .live-ribbons { opacity: 0; }
+        .live-photo .live-role {
+            position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+            background: rgba(255,255,255,0.9); color: #1f2937; border-radius: 999px;
+            font-size: 0.66rem; font-weight: 700; padding: 2px 9px; z-index: 2; line-height: 1.4;
+        }
+        .live-strip .strip-status {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #D4AF37; font-size: 1rem; z-index: 3; pointer-events: none;
+            background: rgba(31,41,55,0.35); border-radius: 14px;
+        }
+        .live-strip .strip-status.hidden { display: none; }
+        .live-ribbons { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+
+        /* Features section */
+        .features-section {
+            background: #f3f4f6;
+            padding: 36px 20px 40px;
+        }
+        .features-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .features-heading {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1a1a1a;
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .feature-card {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 24px 20px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+            text-align: center;
+        }
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 14px;
+            background: rgba(212, 175, 55, 0.1);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .feature-icon svg {
+            width: 24px;
+            height: 24px;
+            stroke: #D4AF37;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .feature-card h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+        }
+        .feature-card p {
+            font-size: 0.9rem;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+
+        /* Demo section */
+        .demo-section {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 16px 28px;
+            background: #ffffff;
+        }
+        .demo-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .demo-title {
+            font-size: 2rem;
+            margin-bottom: 16px;
+            color: #1a1a1a;
+            font-weight: 700;
+            text-align: center;
+        }
+        .demo-cta {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .btn-demo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 28px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-decoration: none;
+            background: #D4AF37;
+            color: #1a1a1a;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+        .btn-demo:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(212, 175, 55, 0.35);
+            background: #E5C158;
+        }
+        .btn-demo:focus-visible {
+            outline: 2px solid #1a1a1a;
+            outline-offset: 2px;
+        }
+
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            justify-items: center;
+            align-items: start;
+        }
+
+        .demo-panel-title {
+            flex-shrink: 0;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .demo-image-card {
+            justify-self: center;
+            width: fit-content;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            border-radius: 12px;
+            padding: 10px 10px 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border: 1px solid #e5e7eb;
+        }
+        .demo-image-wrapper {
+            position: relative;
+            width: clamp(280px, 32vw, 440px);
+            aspect-ratio: 3 / 4;
+            max-width: 100%;
+            background: #eceff1;
+            border-radius: 8px;
+            overflow: hidden;
+            display: block;
+            margin: 0 auto;
+        }
+        .demo-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background:
+                linear-gradient(120deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0.35) 50%, rgba(255, 255, 255, 0) 70%),
+                linear-gradient(180deg, #d9dee2 0%, #eceff1 55%, #dfe4e8 100%);
+            background-size: 220% 100%, 100% 100%;
+            background-position: 100% 0, 0 0;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: opacity 0.25s ease;
+        }
+        .demo-placeholder::before {
+            content: '';
+            width: 36%;
+            height: 78%;
+            border-radius: 999px;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0 14%, transparent 14% 20%, rgba(255, 255, 255, 0.25) 20% 24%, transparent 24% 100%);
+            box-shadow: 0 0 0 999px rgba(255, 255, 255, 0.04);
+        }
+        .demo-placeholder.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .demo-image {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            object-position: center;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .demo-overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            overflow: visible;
+        }
+        .demo-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #D4AF37;
+            font-size: 1.1rem;
+        }
+
+        /* Footer */
+        .footer {
+            flex-shrink: 0;
+            background: #1a1a1a;
+            color: #D4AF37;
+            padding: 24px 20px;
+            text-align: center;
+            border-top: 2px solid #D4AF37;
+        }
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 0;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .footer-links a {
+            color: #D4AF37;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            padding: 6px 16px;
+            min-width: 80px;
+            text-align: center;
+            transition: color 0.2s ease;
+        }
+        .footer-links a:hover {
+            color: #E5C158;
+        }
+        .footer p {
+            color: #B8860B;
+            font-size: 0.85rem;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .pulsing {
+            animation: pulse 2s infinite;
+        }
+        @keyframes shimmer {
+            from { background-position: 100% 0, 0 0; }
+            to { background-position: -100% 0, 0 0; }
+        }
+        .shimmering {
+            animation: shimmer 1.6s linear infinite;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .demo-grid {
+                grid-template-columns: 1fr;
+            }
+            .demo-image-card {
+                max-width: 480px;
+            }
+        }
+        @media (max-width: 768px) {
+            .live-stage { width: 100%; margin-left: 0; transform: none; }
+            .hamburger { display: block; }
+            .nav-links {
+                display: none;
+                flex-direction: column;
+                width: 100%;
+                padding-top: 12px;
+                gap: 2px;
+            }
+            .nav-links.open { display: flex; }
+            .nav-links a { width: 100%; padding: 10px 16px; }
+            .nav-container { flex-wrap: wrap; }
+            .marketing-hero { padding: 28px 16px 32px; }
+            .marketing-hero h1 { font-size: 1.65rem; }
+            .hero-subtitle { font-size: 0.95rem; }
+            .hero-stat { font-size: 1.15rem; }
+            .features-section { padding: 28px 16px 32px; }
+            .features-grid { grid-template-columns: 1fr; gap: 14px; }
+            .feature-card { padding: 20px 18px; }
+            .demo-title { font-size: 1.5rem; }
+            .btn-demo { padding: 9px 22px; font-size: 0.9rem; }
+            .demo-section { padding: 16px 12px 24px; }
+            .demo-grid { gap: 16px; }
+            .demo-image-card { max-width: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <a href="/" class="public-logo" aria-label="Pole Annotation home">
+                <img src="/static/logos/Pole_Annotation_Logo.png" alt="" class="public-logo-icon">
+                <span class="public-logo-wordmark">Pole Annotation</span>
+            </a>
+            <button class="hamburger" id="hamburgerBtn" aria-label="Toggle navigation">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <div class="nav-links nav-links-main" id="navLinks">
+                <a href="/">Home</a>
+                <a href="/about">About</a>
+                <a href="/demo">Demo</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="home-main">
+        <section class="marketing-hero" aria-labelledby="hero-heading">
+            <div class="marketing-hero-inner">
+                <h1 id="hero-heading">Photos in. Make-ready data out.</h1>
+                <p class="hero-subtitle">One field visit, three AI passes: calibrated heights,
+                a full attachment inventory, and every wire traced pole-to-pole.</p>
+                <p class="hero-steps"><span>📏 Calibrate</span><span class="step-arrow">→</span><span>🔍 Annotate</span><span class="step-arrow">→</span><span>🕸️ Trace</span></p>
+            </div>
+        </section>
+
+        <section class="demo-section">
+            <div class="demo-container">
+                <h2 class="demo-title">Watch one span get annotated</h2>
+                <p class="live-caption" id="liveCaption">Loading a random span from the demo circuit…</p>
+
+                <div class="live-stage" id="stage-main">
+                    <h3 id="phaseTitle"><span class="phase-dot" id="phaseDot"></span><span id="phaseText">Loading…</span></h3>
+                    <p class="stage-note" id="phaseNote">&nbsp;</p>
+                    <div class="live-strip" data-stage="main"></div>
+                </div>
+
+                <div class="demo-cta">
+                    <a href="/demo" class="btn-demo">Try the interactive demo</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/demo">Demo</a>
+        </div>
+        <p>&copy; 2026 Pole Annotation. All rights reserved.</p>
+    </footer>
+
+    <script src="/static/span_viz.js"></script>
+    <script>
+        'use strict';
+
+        (function () {
+            var burger = document.getElementById('hamburgerBtn');
+            var navLinks = document.getElementById('navLinks');
+            if (burger && navLinks) {
+                burger.addEventListener('click', function () {
+                    burger.classList.toggle('open');
+                    navLinks.classList.toggle('open');
+                });
+            }
+        })();
+
+        // ------------------------------------------------------------------
+        // Live three-pass showcase: one random demo span, inference at load.
+        // Shares the demo page's palette + marker styling (static, no pan/zoom).
+        // ------------------------------------------------------------------
+        // Shared viz layer (palette + chip renderer + marker builders):
+        // /static/span_viz.js is the single source of the annotation style.
+        var SV = window.SpanViz;
+        var NS = SV.NS;
+        var CABLE_COLORS = SV.CABLE_COLORS;
+        var cableName = SV.cableName, cableColor = SV.cableColor;
+        var titleCase = SV.titleCase, formatFeetInches = SV.formatFeetInches;
+        var measureText = SV.measureText, fitHeightModel = SV.fitHeightModel;
+        var calibrationMarkers = SV.calibrationMarkers, equipmentMarkers = SV.equipmentMarkers;
+        var POLE_TOP_BLUE = SV.POLE_TOP_BLUE, MARKER_OPACITY = SV.MARKER_OPACITY;
+        var DEMO_JOB = 'NEOM110';
+
+
+
+        // Span-trace markers: shared builder; per-trace colour from cable type.
+        function tracingMarkers(pd, traces) {
+            return SV.tracingMarkers(pd, traces, function (ti) {
+                var ct = (traces[ti] && traces[ti].cable_type) || 'unspecified';
+                return { cableType: ct, color: cableColor(ct) };
+            });
+        }
+
+        // --- static chip renderer (demo-page geometry: rect chips, bottom-tip
+        // pointer, leader lines, yellow ruler guide) ---
+        function drawOverlay(svg, natW, natH, dispH, markers, guideTicks, guideFresh) {
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            svg.setAttribute('viewBox', '0 0 ' + natW + ' ' + natH);
+            svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+            var s = dispH > 0 ? natH / dispH : 1;
+
+            SV.drawRulerGuide(svg,
+                (guideTicks || []).map(function (t) {
+                    return { x: t.x * natW / 100, y: t.y * natH / 100 };
+                }),
+                2 * s, guideFresh ? 'marker-pop' : null);
+            if (!markers.length) return;
+
+            var fontPx = 10.5 * s, padX = 4.5 * s, padY = 2.6 * s;
+            var gap = 3 * s, margin = 4 * s;
+            var bodyH = fontPx + 2 * padY, minStep = bodyH + gap;
+            var ptrW = 8 * s, chipGap = 4.3 * s;
+            var geom = { fontPx: fontPx, padX: padX, chipGap: chipGap, ptrW: ptrW,
+                         bodyH: bodyH, minStep: minStep, margin: margin, natH: natH };
+
+            var measured = SV.measureMarkers(markers, natW, natH, geom);
+
+            // freshly-added markers pop in one by one (top to bottom, fast)
+            var popIdx = 0;
+            measured.forEach(function (m) {
+                if (m.fresh) m._popDelay = (popIdx++) * 90;
+            });
+
+            var anchored = measured.filter(function (m) { return m.anchored; });
+            var items = measured.filter(function (m) { return !m.anchored; });
+            SV.stackRows(anchored, true, geom);
+            SV.stackRows(items, false, geom);
+
+            var indentOf = function (it) { return it.child ? 18 * s : 0; };
+            var maxTotW = 0, maxPx = -Infinity;
+            items.forEach(function (it) {
+                maxTotW = Math.max(maxTotW, it.totW + indentOf(it));
+                maxPx = Math.max(maxPx, it.px);
+            });
+            var tipX = Math.max(margin + ptrW,
+                                Math.min(natW - margin - ptrW - maxTotW, maxPx + 14 * s));
+
+            anchored.forEach(function (it) {
+                var chipLeft = Math.max(margin + ptrW, Math.min(it.px + ptrW, natW - margin - it.totW));
+                SV.drawChipRow(svg, it, chipLeft, geom, 'right', it.px, it.py,
+                               { popDelay: it._popDelay });
+            });
+            items.forEach(function (it) {
+                SV.drawChipRow(svg, it, tipX + ptrW + indentOf(it), geom, 'right', it.px, it.py,
+                               { noPointer: !!it.child, popDelay: it._popDelay });
+            });
+        }
+
+        // --- live pipeline: ONE span view cycling empty -> calibration ->
+        // +equipment -> +tracing -> empty, with a caption of what is happening ---
+        var PHASES = [
+            { text: 'Raw field photos',
+              note: 'One pole – midspan – pole span, straight from the survey. Watch the AI passes layer on.' },
+            { text: 'Calibrating',
+              note: 'Ruler ticks anchor a projective height model per photo — the pole top is measured for free.' },
+            { text: 'Annotating equipment',
+              note: 'Transformers, street lights, risers and drip loops detected, each stamped with a calibrated height.' },
+            { text: 'Tracing wires',
+              note: 'Attachments matched pole → midspan → pole; cable types inherited from the detected hardware.' }
+        ];
+        var layers = { cal: [], equip: [], trace: [] };   // per-photo marker lists
+        var guides = [];                                   // per-photo ruler tick pts
+        var lastPayload = null;                            // trace payload (ribbons)
+        var curPhase = 0;
+
+        function mainStrip() { return document.querySelector('.live-strip[data-stage="main"]'); }
+        function photoEls() { return [].slice.call(mainStrip().querySelectorAll('.live-photo')); }
+
+        function buildStrip(photos) {
+            var strip = mainStrip();
+            strip.innerHTML = '';
+            photos.forEach(function (p) {
+                var wrap = document.createElement('div');
+                wrap.className = 'live-photo';
+                var img = document.createElement('img');
+                img.src = p.url;
+                img.alt = p.roleLabel + ' photo';
+                var svg = document.createElementNS(NS, 'svg');
+                var badge = document.createElement('span');
+                badge.className = 'live-role';
+                badge.textContent = p.roleLabel;
+                wrap.appendChild(img); wrap.appendChild(svg); wrap.appendChild(badge);
+                strip.appendChild(wrap);
+            });
+            var rib = document.createElementNS(NS, 'svg');
+            rib.setAttribute('class', 'live-ribbons');
+            strip.appendChild(rib);
+        }
+
+        function whenLoaded(img, fn) {
+            if (img.complete && img.naturalWidth) fn();
+            else img.addEventListener('load', fn);
+        }
+
+        function setPhaseLabel(text, note, busy) {
+            document.getElementById('phaseText').textContent = text + (busy ? '…' : '');
+            document.getElementById('phaseNote').textContent = note || ' ';
+            document.getElementById('phaseDot').classList.toggle('pulsing', !!busy);
+        }
+
+        // Fill the 80vw strip: height at which the photos exactly span its width.
+        function sizeStrip() {
+            var strip = mainStrip();
+            var els = photoEls();
+            var sumAR = 0;
+            els.forEach(function (el) {
+                var img = el.querySelector('img');
+                if (img.naturalWidth) sumAR += img.naturalWidth / img.naturalHeight;
+            });
+            if (!sumAR) return;
+            var gaps = 5 * (els.length - 1) + 12;
+            var h = (strip.clientWidth - gaps) / sumAR;
+            h = Math.max(260, Math.min(h, window.innerHeight * 0.92));
+            strip.style.height = Math.round(h) + 'px';
+        }
+
+        function clearRibbons() {
+            var rib = mainStrip().querySelector('.live-ribbons');
+            if (rib) while (rib.firstChild) rib.removeChild(rib.firstChild);
+        }
+
+        function drawLiveRibbons(payload, animate) {
+            var strip = mainStrip();
+            var rib = strip.querySelector('.live-ribbons');
+            if (!rib || !payload) return;
+            clearRibbons();
+            var els = photoEls();
+            var stripRect = strip.getBoundingClientRect();
+            rib.setAttribute('viewBox', '0 0 ' + stripRect.width + ' ' + stripRect.height);
+            var traces = payload.traces || [];
+            for (var ti = 0; ti < traces.length; ti++) {
+                var tr = traces[ti];
+                if (!tr || (!tr.pole_a_attachment && !tr.pole_b_attachment)) continue;
+                var ct = tr.cable_type || 'unspecified';
+                var pts = [];
+                payload.photos.forEach(function (pd, i) {
+                    var el = els[i];
+                    if (!el) return;
+                    var r = el.querySelector('img').getBoundingClientRect();
+                    function push(xPct, yPct) {
+                        pts.push({ x: r.left - stripRect.left + (xPct / 100) * r.width,
+                                   y: r.top - stripRect.top + (yPct / 100) * r.height });
+                    }
+                    if (pd.role === 'midspan') {
+                        (pd.wires || []).forEach(function (w) {
+                            if (w.trace_index === ti) push(+w.x, +w.y);
+                        });
+                    } else {
+                        (pd.attachments || []).forEach(function (att) {
+                            if ((att.trace_indices || []).indexOf(ti) !== -1) push(+att.x, +att.y);
+                        });
+                    }
+                });
+                if (pts.length < 2) continue;
+                for (var k = 0; k + 1 < pts.length; k++) {
+                    var a = pts[k], b = pts[k + 1];
+                    var sag = Math.min(40, Math.abs(b.x - a.x) * 0.10);
+                    var path = document.createElementNS(NS, 'path');
+                    path.setAttribute('d', 'M ' + a.x + ' ' + a.y +
+                        ' Q ' + ((a.x + b.x) / 2) + ' ' + ((a.y + b.y) / 2 + sag * 2) +
+                        ' ' + b.x + ' ' + b.y);
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke', cableColor(ct));
+                    path.setAttribute('stroke-width', '2');
+                    path.setAttribute('opacity', '0.7');
+                    if (animate) {
+                        path.setAttribute('class', 'ribbon-pop');
+                        path.style.animationDelay = (250 + ti * 120) + 'ms';
+                    }
+                    rib.appendChild(path);
+                }
+            }
+        }
+
+        // Render one cumulative phase: 0 empty, 1 cal, 2 cal+equip, 3 all.
+        // animate=true makes the layer ADDED at this phase pop in marker by marker.
+        function applyPhase(k, busy, animate) {
+            curPhase = k;
+            var p = PHASES[k];
+            setPhaseLabel(p.text, p.note, !!busy);
+            function withFresh(list, fresh) {
+                return (list || []).map(function (m) {
+                    return fresh ? Object.assign({}, m, { fresh: true }) : m;
+                });
+            }
+            photoEls().forEach(function (el, i) {
+                var img = el.querySelector('img'), svg = el.querySelector('svg');
+                var markers = [];
+                if (k >= 1) markers = markers.concat(withFresh(layers.cal[i], animate && k === 1));
+                if (k >= 2) markers = markers.concat(withFresh(layers.equip[i], animate && k === 2));
+                if (k >= 3) {
+                    var tr = layers.trace[i] || [];
+                    // calibration layer already shows this photo's Pole Top chip
+                    if ((layers.cal[i] || []).some(function (m) { return m.label === 'Pole Top'; })) {
+                        tr = tr.filter(function (m) { return m.label !== 'Pole Top'; });
+                    }
+                    markers = markers.concat(withFresh(tr, animate && k === 3));
+                }
+                whenLoaded(img, function () {
+                    drawOverlay(svg, img.naturalWidth, img.naturalHeight,
+                                img.clientHeight || 1, markers, k >= 1 ? guides[i] : null,
+                                animate && k === 1);
+                });
+            });
+            if (k >= 3 && lastPayload) drawLiveRibbons(lastPayload, animate && k === 3);
+            else clearRibbons();
+        }
+
+        var resizeTimer = null;
+        window.addEventListener('resize', function () {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(function () {
+                sizeStrip();
+                applyPhase(curPhase);
+            }, 120);
+        });
+
+        async function errDetail(resp) {
+            try { var d = await resp.json(); return d.detail || ('Server error ' + resp.status); }
+            catch (e) { return 'Server error ' + resp.status; }
+        }
+
+        async function runShowcase() {
+            var caption = document.getElementById('liveCaption');
+            try {
+                var resp = await fetch('/api/spans/list');
+                var data = await resp.json();
+                var candidates = (data.spans || []).filter(function (s) {
+                    return s.job === DEMO_JOB && s.photos.length >= 3;
+                });
+                if (!candidates.length) throw new Error('no demo spans');
+                var span = candidates[Math.floor(Math.random() * candidates.length)];
+                caption.textContent = 'Live inference on ' + span.job + ' — pole ' + span.pole_a_scid +
+                    ' ↔ pole ' + span.pole_b_scid + ' (random span, computed in your session right now)';
+
+                var photos = span.photos.map(function (p, i) {
+                    return {
+                        role: p.role, url: p.url,
+                        roleLabel: p.role === 'pole_a' ? 'Pole ' + span.pole_a_scid
+                                 : p.role === 'pole_b' ? 'Pole ' + span.pole_b_scid : 'Midspan',
+                        name: p.role + '_' + i + '.jpg'
+                    };
+                });
+                buildStrip(photos);
+                applyPhase(0);
+                Promise.all(photoEls().map(function (el) {
+                    return new Promise(function (res) { whenLoaded(el.querySelector('img'), res); });
+                })).then(sizeStrip);
+
+                var blobs = await Promise.all(photos.map(async function (p) {
+                    var r = await fetch(p.url);
+                    return await r.blob();
+                }));
+                var heightFits = [];
+
+                // Pass 1: calibration on every photo
+                setPhaseLabel('Calibrating', PHASES[1].note, true);
+                await Promise.all(photos.map(async function (p, i) {
+                    var fd = new FormData();
+                    fd.append('image', blobs[i], p.name);
+                    var t = p.role === 'midspan' ? 'midspan' : 'pole';
+                    var r = await fetch('/demo/predict?image_type=' + t + '&pipeline=calibration', { method: 'POST', body: fd });
+                    if (!r.ok) throw new Error(await errDetail(r));
+                    var d = await r.json();
+                    var ticks = (d.results || {})['Ruler Markings'] || [];
+                    heightFits[i] = fitHeightModel(ticks);
+                    layers.cal[i] = calibrationMarkers(d.results, heightFits[i]);
+                    guides[i] = ticks.map(function (k) { return { x: +k.percentX, y: +k.percentY }; });
+                }));
+                applyPhase(1, false, true);
+
+                // Pass 2: equipment on the pole photos
+                setPhaseLabel('Annotating equipment', PHASES[2].note, true);
+                await Promise.all(photos.map(async function (p, i) {
+                    if (p.role === 'midspan') return;
+                    var fd = new FormData();
+                    fd.append('image', blobs[i], p.name);
+                    var r = await fetch('/demo/predict?image_type=pole&pipeline=annotation', { method: 'POST', body: fd });
+                    if (!r.ok) throw new Error(await errDetail(r));
+                    var d = await r.json();
+                    layers.equip[i] = equipmentMarkers(d.results, heightFits[i]);
+                }));
+                applyPhase(2, false, true);
+
+                // Pass 3: full span trace
+                setPhaseLabel('Tracing wires', PHASES[3].note, true);
+                var fd3 = new FormData();
+                photos.forEach(function (p, i) {
+                    if (p.role === 'pole_a') fd3.append('pole_a', blobs[i], p.name);
+                    else if (p.role === 'pole_b') fd3.append('pole_b', blobs[i], p.name);
+                    else fd3.append('midspans', blobs[i], p.name);
+                });
+                var r3 = await fetch('/demo/trace', { method: 'POST', body: fd3 });
+                if (!r3.ok) throw new Error(await errDetail(r3));
+                var payload = await r3.json();
+                payload.photos.forEach(function (pd, i) {
+                    layers.trace[i] = tracingMarkers(pd, payload.traces || []);
+                });
+                lastPayload = payload;
+                applyPhase(3, false, true);
+
+                // All passes ready: keep cycling empty -> cal -> equip -> trace
+                setTimeout(function () {
+                    setInterval(function () {
+                        applyPhase((curPhase + 1) % PHASES.length, false, true);
+                    }, 3200);
+                }, 2500);
+            } catch (e) {
+                console.error('Live showcase failed', e);
+                caption.textContent = 'Live demo unavailable right now — try the interactive demo below.';
+                setPhaseLabel('Live demo unavailable', 'The interactive demo below still works.', false);
+            }
+        }
+
+        runShowcase();
+    </script>
+</body>
+</html>

@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About · Pole Annotation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.55;
+            color: #111827;
+            background: #f3f4f6;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+        }
+        nav {
+            flex-shrink: 0;
+            background: #1a1a1a;
+            color: #D4AF37;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            padding: 24px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .public-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            flex-shrink: 0;
+        }
+        .public-logo-icon {
+            height: 56px;
+            width: auto;
+            object-fit: contain;
+        }
+        .public-logo-wordmark {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #D4AF37;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+            line-height: 1.1;
+        }
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-container[hidden] { display: none !important; }
+        .logo-img { height: 48px; width: auto; max-width: 150px; object-fit: contain; }
+        .logo-separator {
+            width: 1px;
+            height: 40px;
+            background: rgba(212, 175, 55, 0.3);
+            margin: 0 12px;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px;
+            margin-left: auto;
+        }
+        .hamburger span {
+            display: block;
+            width: 24px;
+            height: 2px;
+            background: #D4AF37;
+            margin: 5px 0;
+            border-radius: 2px;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+        .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px, 5px); }
+        .hamburger.open span:nth-child(2) { opacity: 0; }
+        .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px, -5px); }
+        .nav-links {
+            display: flex;
+            gap: 0;
+            align-items: center;
+        }
+        .nav-links a {
+            color: #D4AF37;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.85rem;
+            padding: 6px 16px;
+            border-radius: 4px;
+            min-width: 80px;
+            text-align: center;
+            transition: color 0.2s ease, background 0.2s ease;
+        }
+        .nav-links a:hover {
+            color: #E5C158;
+            background: rgba(212, 175, 55, 0.1);
+        }
+        .nav-links a.active { color: #E5C158; font-weight: 600; }
+        .nav-links-main { margin-left: auto; }
+
+        main {
+            flex: 1 0 auto;
+            width: 100%;
+        }
+        .page-hero {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+            color: #D4AF37;
+            padding: 32px 20px 36px;
+            text-align: center;
+            border-bottom: 2px solid #D4AF37;
+            position: relative;
+            overflow: hidden;
+        }
+        .page-hero::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(212, 175, 55, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .page-hero-inner {
+            position: relative;
+            z-index: 1;
+        }
+        .page-hero h1 {
+            font-size: 1.85rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+        }
+        .page-hero p {
+            color: #E5C158;
+            font-size: 1rem;
+            max-width: 640px;
+            margin: 0 auto;
+            opacity: 0.95;
+        }
+
+        .content-wrap {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 32px 20px 48px;
+        }
+        .prose {
+            background: #fff;
+            border-radius: 12px;
+            padding: 28px 26px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+            margin-bottom: 28px;
+        }
+        .prose h2 {
+            font-size: 1.2rem;
+            color: #1a1a1a;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+        .prose p, .prose li {
+            color: #4b5563;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+        }
+        .prose ul { margin-left: 1.2rem; margin-bottom: 12px; }
+        .prose li { margin-bottom: 6px; }
+
+        /* Metrics dashboard */
+        .dash {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 26px 24px;
+            margin-bottom: 28px;
+            border: 1px solid #2d2d2d;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        .dash h2 { font-size: 1.15rem; color: #D4AF37; font-weight: 700; margin-bottom: 4px; }
+        .dash .dash-sub { color: #9ca3af; font-size: 0.83rem; margin-bottom: 18px; }
+        .dash-grid {
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+        }
+        .dash-card {
+            background: #262626; border: 1px solid #3a3a3a; border-radius: 10px;
+            padding: 16px 14px; text-align: center;
+        }
+        .dash-card .big { font-size: 1.7rem; font-weight: 800; color: #E5C158; line-height: 1.15; }
+        .dash-card .unit { font-size: 0.95rem; font-weight: 600; }
+        .dash-card .what { color: #f3f4f6; font-size: 0.85rem; font-weight: 700; margin-top: 4px; }
+        .dash-card .how { color: #9ca3af; font-size: 0.74rem; margin-top: 6px; line-height: 1.4; }
+        .dash-foot { color: #6b7280; font-size: 0.74rem; margin-top: 14px; }
+        @media (max-width: 820px) { .dash-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .dash-grid { grid-template-columns: 1fr; } }
+
+        /* Make-ready steps */
+        .steps { counter-reset: step; }
+        .steps li {
+            list-style: none; position: relative; padding-left: 40px; margin-bottom: 12px;
+        }
+        .steps li::before {
+            counter-increment: step; content: counter(step);
+            position: absolute; left: 0; top: 1px;
+            width: 26px; height: 26px; border-radius: 50%;
+            background: #D4AF37; color: #1a1a1a; font-weight: 800; font-size: 0.85rem;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .contact-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px 26px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+            margin-bottom: 28px;
+        }
+        .contact-card h2 {
+            font-size: 1.15rem;
+            color: #1a1a1a;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        .contact-card p {
+            color: #4b5563;
+            font-size: 0.95rem;
+            margin-bottom: 14px;
+        }
+        .contact-line {
+            color: #111827;
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+        }
+        .contact-line a {
+            color: #1a1a1a;
+            text-decoration: none;
+            border-bottom: 1px solid #d1d5db;
+        }
+        .contact-line a:hover {
+            border-bottom-color: #1a1a1a;
+        }
+
+        .footer {
+            flex-shrink: 0;
+            background: #1a1a1a;
+            color: #D4AF37;
+            padding: 24px 20px;
+            text-align: center;
+            border-top: 2px solid #D4AF37;
+        }
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 0;
+            margin-bottom: 15px;
+        }
+        .footer-links a {
+            color: #D4AF37;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            padding: 6px 16px;
+            min-width: 80px;
+            text-align: center;
+            transition: color 0.2s ease;
+        }
+        .footer-links a:hover { color: #E5C158; }
+        .footer p { color: #B8860B; font-size: 0.85rem; }
+
+        @media (max-width: 768px) {
+            .hamburger { display: block; }
+            .nav-links {
+                display: none;
+                flex-direction: column;
+                width: 100%;
+                padding-top: 12px;
+                gap: 2px;
+            }
+            .nav-links.open { display: flex; }
+            .nav-links a { width: 100%; padding: 10px 16px; }
+            .nav-container { flex-wrap: wrap; }
+            .page-hero h1 { font-size: 1.5rem; }
+            .content-wrap { padding: 24px 16px 40px; }
+            .prose, .figure-block { padding: 20px 18px; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-container">
+            <a href="/" class="public-logo" aria-label="Pole Annotation home">
+                <img src="/static/logos/Pole_Annotation_Logo.png" alt="" class="public-logo-icon">
+                <span class="public-logo-wordmark">Pole Annotation</span>
+            </a>
+            <button class="hamburger" id="hamburgerBtn" aria-label="Toggle navigation">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <div class="nav-links nav-links-main" id="navLinks">
+                <a href="/">Home</a>
+                <a href="/about" class="active">About</a>
+                <a href="/demo">Demo</a>
+            </div>
+        </div>
+    </nav>
+
+    <main>
+        <header class="page-hero">
+            <div class="page-hero-inner">
+                <h1>About Pole Annotation</h1>
+                <p>AI that automates the photo-annotation half of the make-ready process.</p>
+            </div>
+        </header>
+
+        <div class="content-wrap">
+            <article class="prose">
+                <h2>Why make-ready needs this</h2>
+                <p>
+                    Before a new fiber or cable attacher can go on a utility pole, every existing
+                    attachment must be measured and inventoried — the <strong>make-ready
+                    survey</strong>. Today that means a field tech photographs each pole and span,
+                    and an annotator spends minutes per photo: calibrating heights against a survey
+                    ruler, marking every insulator and equipment point, classifying its hardware and
+                    cable type, and tracing which wire goes where across the span.
+                </p>
+                <p>
+                    Pole Annotation does that annotation pass automatically. Photos go in; a
+                    reviewer gets a pre-filled pole record to confirm instead of a blank one to build.
+                </p>
+                <h2 style="margin-top: 20px;">What it automates</h2>
+                <ul class="steps">
+                    <li><strong>Calibrate</strong> — finds the survey ruler and its tick marks, fits a
+                        projective height model, and cross-checks every anchor point against the model
+                        (pass / warn / fail).</li>
+                    <li><strong>Measure</strong> — stamps a calibrated height on the pole top, every
+                        attachment, and every piece of equipment (transformers, street lights, risers,
+                        drip loops).</li>
+                    <li><strong>Classify</strong> — names the hardware (pin, spool, three-bolt,
+                        deadend, crossarm ×K…) and its cable class (primary, neutral, secondary,
+                        CATV, telco, fiber…).</li>
+                    <li><strong>Trace</strong> — matches attachments across pole → midspan → pole so
+                        each conductor is one record, not three disconnected marks.</li>
+                </ul>
+                <p>
+                    The output mirrors the structure annotation tools expect, so a human reviews and
+                    fixes rather than draws from scratch.
+                </p>
+            </article>
+
+            <section class="dash" aria-labelledby="dash-heading">
+                <h2 id="dash-heading">Accuracy at a glance</h2>
+                <p class="dash-sub">Held-out evaluation — photos from sites the models never trained on.</p>
+                <div class="dash-grid">
+                    <div class="dash-card">
+                        <div class="big">≈½<span class="unit"> inch</span></div>
+                        <div class="what">Height model</div>
+                        <div class="how">agreement with annotator-calibrated heights on the survey ruler</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="big">0.84<span class="unit"> F1</span></div>
+                        <div class="what">Equipment detection</div>
+                        <div class="how">transformers, street lights, risers, drip loops</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="big">0.72<span class="unit"> F1</span></div>
+                        <div class="what">Attachment inventory</div>
+                        <div class="how">17 joint hardware × cable classes per pole</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="big">~60<span class="unit">%</span></div>
+                        <div class="what">Wires auto-traced</div>
+                        <div class="how">full pole ↔ midspan ↔ pole chains, reviewer fixes the rest</div>
+                    </div>
+                </div>
+                <p class="dash-foot">
+                    Tracing is built as assisted review — the tool pre-fills every span and flags
+                    what it isn't sure about; a human confirms. Accuracy varies with photo quality
+                    and how closely a region matches the training distribution.
+                </p>
+            </section>
+
+            <section class="contact-card" aria-labelledby="contact-heading">
+                <h2 id="contact-heading">Contact</h2>
+                <div class="contact-line">Saroj Neupane</div>
+                <div class="contact-line"><a href="tel:4694687484">469-468-7484</a></div>
+                <div class="contact-line"><a href="mailto:nsaroj789@gmail.com">nsaroj789@gmail.com</a></div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/demo">Demo</a>
+        </div>
+        <p>&copy; 2026 Pole Annotation. All rights reserved.</p>
+    </footer>
+
+    <script>
+        (function () {
+            var burger = document.getElementById('hamburgerBtn');
+            var navLinks = document.getElementById('navLinks');
+            if (burger && navLinks) {
+                burger.addEventListener('click', function () {
+                    burger.classList.toggle('open');
+                    navLinks.classList.toggle('open');
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

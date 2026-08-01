@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pole Annotation · Demo</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.5; background: #f3f4f6; color: #111827;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+
+        nav {
+            flex-shrink: 0; background: #1a1a1a; color: #D4AF37;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3); padding: 12px 20px;
+            position: sticky; top: 0; z-index: 1100;
+        }
+        .nav-container {
+            width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 24px;
+            display: flex; justify-content: space-between; align-items: center; min-width: 0;
+        }
+        .public-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; flex-shrink: 0; }
+        .public-logo-icon { height: 40px; width: auto; object-fit: contain; }
+        .public-logo-wordmark {
+            font-size: 1.1rem; font-weight: 700; color: #D4AF37;
+            letter-spacing: 0.04em; white-space: nowrap;
+        }
+        .hamburger { display: none; background: none; border: none; cursor: pointer; padding: 6px; margin-left: auto; }
+        .hamburger span { display: block; width: 24px; height: 2px; background: #D4AF37; margin: 5px 0; border-radius: 2px; }
+        .nav-links { display: flex; align-items: center; }
+        .nav-links a {
+            color: #D4AF37; text-decoration: none; font-weight: 500; font-size: 0.85rem;
+            padding: 6px 16px; border-radius: 4px; min-width: 80px; text-align: center;
+        }
+        .nav-links a:hover { color: #E5C158; background: rgba(212,175,55,0.1); }
+        .nav-links a.active { color: #E5C158; font-weight: 600; }
+        .nav-links-main { margin-left: auto; }
+
+        .main-container { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+
+        /* ---------------- Left: map ---------------- */
+        .left-panel {
+            flex: 0 0 35%; min-width: 240px; max-width: 600px;
+            background: #fff; border-right: 1px solid #e5e7eb;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .left-panel.collapsed { display: none; }
+        #mapView { flex: 1; min-height: 0; position: relative; }
+        .map-pole-label {
+            background: rgba(255,255,255,0.88); border: none; border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+            font-size: 11px; font-weight: 700; color: #1f2937; padding: 1px 5px;
+        }
+        .map-pole-label::before { display: none; }
+        .mid-tri-icon { background: none; border: none; }
+        .mid-tri {
+            width: 0; height: 0; cursor: pointer;
+            border-left: 7px solid transparent; border-right: 7px solid transparent;
+            border-bottom: 12px solid #22c55e;
+            filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
+        }
+        .mid-tri:hover { border-bottom-color: #4ade80; }
+        .map-hint {
+            position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 800;
+            background: rgba(26,26,26,0.85); color: #D4AF37; font-size: 0.72rem; font-weight: 600;
+            padding: 5px 12px; border-radius: 999px; pointer-events: none; white-space: nowrap;
+            max-width: 94%; overflow: hidden; text-overflow: ellipsis;
+        }
+        .map-fallback {
+            flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #9ca3af; font-size: 0.9rem; padding: 20px; text-align: center; gap: 14px;
+        }
+        .sample-list { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
+        .sample-list:empty { display: none; }
+        .sample-span-btn {
+            padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; background: white;
+            color: #111827; font-size: 0.9rem; cursor: pointer; text-align: left;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+        .sample-span-btn:hover { border-color: #D4AF37; background: #fffbeb; }
+
+        /* Custom span builder (collapsed at the bottom of the map panel) */
+        .custom-span { flex-shrink: 0; border-top: 1px solid #e5e7eb; background: #fafafa; }
+        .custom-span summary {
+            cursor: pointer; padding: 9px 14px; font-size: 0.78rem; font-weight: 700; color: #374151;
+            list-style: none; user-select: none;
+        }
+        .custom-span summary::before { content: '▸ '; }
+        .custom-span[open] summary::before { content: '▾ '; }
+        .custom-span-body { padding: 0 12px 12px; }
+        .custom-slots { display: flex; gap: 4px; align-items: center; }
+        .custom-slot {
+            flex: 1; min-width: 0; aspect-ratio: 3 / 4; border: 1.5px dashed #cbd5e1; border-radius: 6px;
+            background: #fff; cursor: pointer; position: relative; overflow: hidden;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font: inherit; font-size: 0.6rem; font-weight: 700; color: #94a3b8; gap: 2px;
+        }
+        .custom-slot:hover { border-color: #D4AF37; color: #78716c; }
+        .custom-slot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        .custom-slot .slot-tag { position: relative; z-index: 1; background: rgba(255,255,255,0.85); border-radius: 4px; padding: 1px 4px; }
+        .custom-link-line { flex: 0 0 8px; height: 2px; background: #86efac; }
+        .custom-span-actions { display: flex; gap: 8px; margin-top: 8px; }
+        .custom-run-btn {
+            flex: 1; border: none; border-radius: 8px; background: #1a1a1a; color: #D4AF37;
+            font: inherit; font-size: 0.78rem; font-weight: 700; padding: 7px; cursor: pointer;
+        }
+        .custom-run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .custom-clear-btn {
+            border: 1px solid #d1d5db; background: #fff; border-radius: 8px; padding: 7px 10px;
+            font: inherit; font-size: 0.78rem; font-weight: 600; color: #6b7280; cursor: pointer;
+        }
+
+        /* ---------------- Right: span viewer ---------------- */
+        .right-panel { flex: 1 1 auto; min-width: 0; background: #f9fafb; display: flex; flex-direction: column; overflow: hidden; }
+        .viewer-header {
+            flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+            padding: 8px 14px; border-bottom: 1px solid #e5e7eb; background: #fff;
+            min-height: 48px; flex-wrap: wrap;
+        }
+        .viewer-title { font-size: 0.92rem; font-weight: 700; color: #1f2937; }
+        .viewer-sub { font-size: 0.76rem; color: #6b7280; }
+        .viewer-spacer { flex: 1; }
+        .viewer-btn {
+            border: 1px solid #d1d5db; background: #fff; color: #1f2937; border-radius: 8px;
+            padding: 6px 11px; font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+        }
+        .viewer-btn:hover:not(:disabled) { background: #f9fafb; border-color: #D4AF37; }
+        .viewer-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Stage progress chips */
+        .stage-chips { display: flex; align-items: center; gap: 4px; }
+        .stage-chip {
+            display: flex; align-items: center; gap: 5px;
+            font-size: 0.72rem; font-weight: 700; color: #6b7280;
+            border: 1px solid #e5e7eb; border-radius: 999px; padding: 3px 10px; background: #f9fafb;
+        }
+        .stage-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
+        .stage-chip.running { border-color: #D4AF37; color: #92700c; }
+        .stage-chip.running .dot { background: #D4AF37; animation: pulse 1s ease-in-out infinite; }
+        .stage-chip.done { border-color: #86efac; color: #14532d; background: #f0fdf4; }
+        .stage-chip.done .dot { background: #22c55e; }
+        .stage-chip.error { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
+        .stage-chip.error .dot { background: #ef4444; }
+        .stage-arrow { color: #d1d5db; font-size: 0.72rem; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        /* progressive reveal: freshly-detected markers pop in one by one */
+        @keyframes markerPop { from { opacity: 0; } to { opacity: 1; } }
+        .marker-pop { opacity: 0; animation: markerPop 0.16s ease-out forwards; }
+        @keyframes ribbonPop { from { opacity: 0; } to { opacity: 0.7; } }
+        .ribbon-pop { opacity: 0; animation: ribbonPop 0.2s ease-out forwards; }
+
+        /* Layer toggles */
+        .layer-toggles { display: flex; align-items: center; gap: 8px; }
+        .layer-toggle {
+            display: flex; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 600;
+            color: #374151; cursor: pointer; user-select: none;
+        }
+        .layer-toggle input { accent-color: #D4AF37; }
+
+        .viewer-body { flex: 1; min-height: 0; position: relative; display: flex; }
+
+        /* MR-QC-style photo strip: vertical fill, EQUAL-width frames, crop not squash */
+        .span-strip {
+            flex: 1; min-width: 0; display: none; position: relative;
+            background: #1f2937; overflow: hidden;
+        }
+        .span-strip.show { display: flex; }
+        .span-frame {
+            position: relative; flex: 1 1 0; min-width: 0; height: 100%;
+            overflow: hidden; border-right: 2px solid #111827; cursor: grab;
+        }
+        .span-frame:last-child { border-right: none; }
+        .span-frame.dragging { cursor: grabbing; }
+        .span-frame .bundle { position: absolute; left: 0; top: 0; transform-origin: 0 0; line-height: 0; }
+        .span-frame .bundle img { display: block; user-select: none; pointer-events: none; }
+        .span-frame .bundle svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+        .frame-badge {
+            position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 6;
+            display: flex; align-items: center; gap: 6px; pointer-events: none;
+        }
+        .role-badge {
+            width: 22px; height: 22px; border-radius: 50%;
+            color: #fff; font-size: 0.68rem; font-weight: 800;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        .role-badge.pole { background: #0d9488; }
+        .role-badge.mid { background: #0ea5e9; }
+        .frame-caption {
+            background: rgba(255,255,255,0.9); color: #1f2937; border-radius: 999px;
+            font-size: 0.66rem; font-weight: 700; padding: 2px 8px;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.25); border-top: 4px solid #D4AF37; border-radius: 50%;
+            width: 32px; height: 32px; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Cross-photo trace ribbons */
+        #ribbonSvg {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 4;
+        }
+
+        .viewer-empty {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: #9ca3af; font-size: 0.95rem; text-align: center; padding: 24px;
+        }
+
+        .json-drawer {
+            display: none; flex: 0 0 34%; min-width: 260px; max-width: 480px;
+            border-left: 1px solid #e5e7eb; background: #fff; flex-direction: column; overflow: hidden; z-index: 7;
+        }
+        .json-drawer.show { display: flex; }
+        .json-drawer-head {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; border-bottom: 1px solid #e5e7eb;
+            font-size: 0.8rem; font-weight: 700; color: #374151;
+        }
+        .json-drawer pre {
+            flex: 1; overflow: auto; padding: 12px; margin: 0;
+            font-family: 'Courier New', monospace; font-size: 0.72rem;
+            white-space: pre-wrap; word-wrap: break-word; background: #f9fafb;
+        }
+
+        .error-banner {
+            display: none; background: #fee2e2; color: #b91c1c; padding: 8px 14px;
+            border-left: 4px solid #ef4444; font-size: 0.82rem; flex-shrink: 0;
+        }
+
+        .footer {
+            flex-shrink: 0; background: #1a1a1a; color: #D4AF37; padding: 7px 20px;
+            text-align: center; border-top: 2px solid #D4AF37;
+            display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
+        }
+        .footer-links { display: flex; justify-content: center; flex-wrap: wrap; }
+        .footer-links a {
+            color: #D4AF37; text-decoration: none; font-weight: 500; font-size: 0.78rem;
+            padding: 3px 12px; min-width: 60px; text-align: center;
+        }
+        .footer-links a:hover { color: #E5C158; }
+        .footer p { color: #B8860B; font-size: 0.72rem; margin: 0; }
+
+        .json-drawer pre::-webkit-scrollbar { width: 8px; height: 8px; }
+        .json-drawer pre::-webkit-scrollbar-thumb { background: #999; border-radius: 4px; }
+
+        @media (max-width: 900px) {
+            .hamburger { display: block; }
+            .nav-links { display: none; flex-direction: column; width: 100%; padding-top: 12px; }
+            .nav-links.open { display: flex; }
+            .nav-links a { width: 100%; padding: 10px 16px; }
+            .nav-container { flex-wrap: wrap; }
+            body { height: auto; min-height: 100dvh; overflow: auto; }
+            .main-container { flex-direction: column; flex: 1 0 auto; }
+            .left-panel { flex: 0 0 auto; width: 100%; max-width: none; height: 42vh; border-right: none; border-bottom: 1px solid #e5e7eb; }
+            .right-panel { width: 100%; min-height: 58vh; }
+            .json-drawer { position: fixed; inset: 8% 4%; max-width: none; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-container">
+            <a href="/" class="public-logo" aria-label="Pole Annotation home">
+                <img src="/static/logos/Pole_Annotation_Logo.png" alt="" class="public-logo-icon">
+                <span class="public-logo-wordmark">Pole Annotation</span>
+            </a>
+            <button class="hamburger" id="hamburgerBtn" aria-label="Toggle navigation">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="nav-links nav-links-main" id="navLinks">
+                <a href="/">Home</a>
+                <a href="/about">About</a>
+                <a href="/demo" class="active">Demo</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <!-- Left: span map -->
+        <div class="left-panel">
+            <div id="mapView"></div>
+            <div class="map-fallback" id="mapFallback" style="display:none">
+                <div id="mapFallbackMsg">Map unavailable — use "Your own span" below.</div>
+                <div class="sample-list" id="sampleList"></div>
+            </div>
+            <details class="custom-span" id="customSpan">
+                <summary>Your own span (upload photos)</summary>
+                <div class="custom-span-body">
+                    <div class="custom-slots" id="customSlots"></div>
+                    <div class="custom-span-actions">
+                        <button type="button" class="custom-run-btn" id="customRunBtn" disabled>Open span</button>
+                        <button type="button" class="custom-clear-btn" id="customClearBtn">Clear</button>
+                    </div>
+                </div>
+            </details>
+            <input type="file" id="slotFileInput" accept="image/*" hidden>
+        </div>
+
+        <!-- Right: span viewer -->
+        <div class="right-panel">
+            <div class="viewer-header">
+                <button type="button" class="viewer-btn" id="mapCollapseBtn" title="Toggle map panel">⟨ Map</button>
+                <span class="viewer-title" id="viewerTitle">Span viewer</span>
+                <span class="viewer-sub" id="viewerSub">Click a span on the map</span>
+                <div class="stage-chips" id="stageChips" style="display:none">
+                    <span class="stage-chip" data-stage="calibration"><span class="dot"></span>Calibration</span>
+                    <span class="stage-arrow">→</span>
+                    <span class="stage-chip" data-stage="equipment"><span class="dot"></span>Equipment</span>
+                    <span class="stage-arrow">→</span>
+                    <span class="stage-chip" data-stage="tracing"><span class="dot"></span>Tracing</span>
+                </div>
+                <span class="viewer-spacer"></span>
+                <div class="layer-toggles" id="layerToggles" style="display:none">
+                    <label class="layer-toggle"><input type="checkbox" data-layer="calibration" checked>Calibration</label>
+                    <label class="layer-toggle"><input type="checkbox" data-layer="equipment" checked>Equipment</label>
+                    <label class="layer-toggle"><input type="checkbox" data-layer="tracing" checked>Tracing</label>
+                    <label class="layer-toggle" id="gtToggle" style="display:none"><input type="checkbox" data-layer="gt">Ground Truth</label>
+                </div>
+                <button type="button" class="viewer-btn" id="jsonToggleBtn" disabled>Results JSON</button>
+                <button type="button" class="viewer-btn" id="downloadBtn" disabled>Download JPEG</button>
+            </div>
+            <div class="error-banner" id="errorBanner"></div>
+            <div class="viewer-body">
+                <div class="span-strip" id="spanStrip"></div>
+                <div class="viewer-empty" id="viewerEmpty">
+                    Click a green span line to trace a full span,<br>
+                    or a pole / midspan ▲ to annotate a single photo
+                </div>
+                <aside class="json-drawer" id="jsonDrawer">
+                    <div class="json-drawer-head">
+                        <span>Results</span>
+                        <button type="button" class="viewer-btn" id="jsonCloseBtn">Close</button>
+                    </div>
+                    <pre id="jsonPre">No results yet</pre>
+                </aside>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/demo">Demo</a>
+        </div>
+        <p>&copy; 2026 Pole Annotation. All rights reserved.</p>
+    </footer>
+
+    <script src="/static/span_viz.js"></script>
+    <script>
+        'use strict';
+
+        // ------------------------------------------------------------------
+        // State
+        // ------------------------------------------------------------------
+        var state = {
+            spans: [],
+            custom: { pole_a: null, mid_1: null, mid_2: null, pole_b: null },
+            selected: null,          // { key, title, sub, photos: [{role,url,name,file?}] }
+            runSeq: 0,
+            layers: { calibration: true, equipment: true, tracing: true, gt: false },
+            // per-column per-layer marker lists + tracing extras
+            overlays: [],            // [ { calibration: [], equipment: [], tracing: [], gt: [] } ]
+            tracePayload: null,
+            traceStyles: [],       // per-trace {cableType, color, dash}
+            heightFits: [],        // per-photo y% -> feet, from the ruler ticks
+            results: {},             // per-stage raw results for the JSON drawer
+            cache: {}
+        };
+
+        // Shared viz layer (palette + chip renderer + marker builders):
+        // /static/span_viz.js is the single source of the annotation style.
+        var SV = window.SpanViz;
+        var CABLE_COLORS = SV.CABLE_COLORS, CABLE_NAMES = SV.CABLE_NAMES;
+        var EQUIPMENT_COLORS = SV.EQUIPMENT_COLORS, EQUIPMENT_FALLBACK = SV.EQUIPMENT_FALLBACK;
+        var ARM_COLOR = SV.ARM_COLOR, HEIGHT_WHITE = SV.HEIGHT_WHITE;
+        var POLE_TOP_BLUE = SV.POLE_TOP_BLUE, MARKER_OPACITY = SV.MARKER_OPACITY;
+        var measureText = SV.measureText, titleCase = SV.titleCase;
+        var cableName = SV.cableName, cableColor = SV.cableColor;
+        var formatFeetInches = SV.formatFeetInches;
+        var fitHeightModel = SV.fitHeightModel;
+        var calibrationMarkers = SV.calibrationMarkers, equipmentMarkers = SV.equipmentMarkers;
+        var buildTraceStyles = SV.buildTraceStyles, gtMarkers = SV.gtMarkers;
+        // the demo ships one job; the map shows only its spans (NEOM110: best
+        // e2e chain acc of the honest-test jobs with 20+ spans, 0.588 deployed-config)
+        var DEMO_JOB = 'NEOM110';
+        var POLE_LABEL_ZOOM = 17;
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        }
+
+        // ------------------------------------------------------------------
+        // Spans + map
+        // ------------------------------------------------------------------
+        async function loadSpans() {
+            try {
+                var resp = await fetch('/api/spans/list');
+                var data = await resp.json();
+                state.spans = data.spans || [];
+            } catch (e) {
+                console.error('Failed to load spans', e);
+                state.spans = [];
+            }
+            initMap();
+            renderCustomSlots();
+            var params = new URLSearchParams(location.search);
+            var spanId = params.get('span');
+            if (spanId) selectSampleSpan(spanId);
+        }
+
+        var map = null;
+        var mapSpanLines = {};
+
+        function initMap() {
+            var el = document.getElementById('mapView');
+            var located = state.spans.filter(function (s) {
+                return s.job === DEMO_JOB && s.pole_a_latlon && s.pole_b_latlon &&
+                       s.pole_a_latlon[0] != null && s.pole_b_latlon[0] != null;
+            });
+            if (typeof L === 'undefined' || !located.length) {
+                el.style.display = 'none';
+                document.getElementById('mapFallback').style.display = 'flex';
+                if (state.spans.length) {
+                    document.getElementById('mapFallbackMsg').textContent =
+                        'Pick a sample span, or upload your own photos below.';
+                    renderSampleList();
+                }
+                return;
+            }
+
+            map = L.map(el, { zoomControl: true });
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 20, maxNativeZoom: 19, attribution: 'Imagery &copy; Esri'
+            }).addTo(map);
+
+            var bounds = [];
+            var seenPoles = {};
+            var poleMarkers = [];
+            located.forEach(function (s) {
+                var a = s.pole_a_latlon, b = s.pole_b_latlon;
+                bounds.push(a, b);
+
+                var line = L.polyline([a, b], { color: '#22c55e', weight: 4, opacity: 0.9 }).addTo(map);
+                line.on('click', function () { selectSampleSpan(s.id); });
+                line.on('mouseover', function () { line.setStyle({ weight: 7, color: '#4ade80' }); });
+                line.on('mouseout', function () { styleSpanLine(s.id); });
+                var nm = s.photos.filter(function (p) { return p.role === 'midspan'; }).length;
+                line.bindTooltip('Span ' + esc(s.pole_a_scid) + ' ↔ ' + esc(s.pole_b_scid) + ' · ' + nm + ' midspan(s)', { sticky: true });
+                mapSpanLines[s.id] = line;
+
+                // midspan section: green triangle at the span midpoint — click
+                // opens that single midspan photo and runs its inference
+                if (nm) {
+                    var tri = L.marker([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], {
+                        icon: L.divIcon({ className: 'mid-tri-icon', html: '<div class="mid-tri"></div>',
+                                          iconSize: [14, 12], iconAnchor: [7, 6] })
+                    }).addTo(map);
+                    tri.bindTooltip('Midspan · ' + esc(s.pole_a_scid) + ' ↔ ' + esc(s.pole_b_scid),
+                                    { direction: 'top', offset: [0, -8], className: 'map-pole-label' });
+                    tri.on('click', function () { selectSingleMid(s.id); });
+                }
+
+                [[a, s.pole_a_scid, 'pole_a'], [b, s.pole_b_scid, 'pole_b']].forEach(function (pair) {
+                    var key = pair[0][0].toFixed(7) + ',' + pair[0][1].toFixed(7);
+                    if (seenPoles[key]) return;
+                    seenPoles[key] = true;
+                    var mk = L.circleMarker(pair[0], {
+                        radius: 6, color: '#14532d', weight: 2, fillColor: '#86efac', fillOpacity: 1
+                    }).addTo(map).bindTooltip(String(pair[1] || ''), {
+                        permanent: false, direction: 'top', offset: [0, -8], className: 'map-pole-label'
+                    });
+                    // pole click opens that single pole photo (calibration +
+                    // equipment + attachment inference)
+                    mk.on('click', function () { selectSinglePole(s.id, pair[2], pair[1]); });
+                    poleMarkers.push(mk);
+                });
+            });
+            map.fitBounds(L.latLngBounds(bounds).pad(0.15));
+
+            // 169 poles in one job: pinned SCID labels only make sense zoomed in,
+            // otherwise they overlap into an unreadable block
+            var labelsPinned = false;
+            function syncPoleLabels() {
+                var want = map.getZoom() >= POLE_LABEL_ZOOM;
+                if (want === labelsPinned) return;
+                labelsPinned = want;
+                poleMarkers.forEach(function (mk) {
+                    var text = mk.getTooltip().getContent();
+                    mk.unbindTooltip();
+                    mk.bindTooltip(text, {
+                        permanent: want, direction: 'top', offset: [0, -8], className: 'map-pole-label'
+                    });
+                });
+            }
+            map.on('zoomend', syncPoleLabels);
+            syncPoleLabels();
+
+            var hint = document.createElement('div');
+            hint.className = 'map-hint';
+            hint.textContent = 'Click a span, pole, or midspan ▲ to run inference';
+            el.appendChild(hint);
+        }
+
+        function renderSampleList() {
+            var wrap = document.getElementById('sampleList');
+            wrap.innerHTML = '';
+            state.spans.forEach(function (s) {
+                var nm = s.photos.filter(function (p) { return p.role === 'midspan'; }).length;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'sample-span-btn';
+                btn.textContent = (s.job || s.id) + ' — pole · ' + nm + ' midspan(s) · pole';
+                btn.addEventListener('click', function () { selectSampleSpan(s.id); });
+                wrap.appendChild(btn);
+            });
+        }
+
+        function styleSpanLine(spanId) {
+            var line = mapSpanLines[spanId];
+            if (!line) return;
+            var selected = state.selected && state.selected.key === 'sample:' + spanId;
+            line.setStyle(selected ? { color: '#D4AF37', weight: 7, opacity: 1 }
+                                   : { color: '#22c55e', weight: 4, opacity: 0.9 });
+        }
+        function refreshMapSelection() { Object.keys(mapSpanLines).forEach(styleSpanLine); }
+
+        function selectSampleSpan(spanId) {
+            var s = state.spans.find(function (x) { return x.id === spanId; });
+            if (!s) return;
+            state.selected = {
+                key: 'sample:' + s.id,
+                title: s.job || s.id,
+                sub: (s.pole_a_scid && s.pole_b_scid)
+                    ? 'Pole ' + s.pole_a_scid + ' ↔ Pole ' + s.pole_b_scid
+                    : 'Sample span',
+                spanId: s.id,
+                photos: s.photos.map(function (p, i) {
+                    return { role: p.role, url: p.url, name: p.role + '_' + i + '.jpg', file: null };
+                })
+            };
+            refreshMapSelection();
+            runPipeline();
+        }
+
+        // Single-photo modes (map pole / midspan-triangle click)
+        function selectSinglePole(spanId, role, scid) {
+            var s = state.spans.find(function (x) { return x.id === spanId; });
+            var p = s && s.photos.find(function (x) { return x.role === role; });
+            if (!p) return;
+            state.selected = {
+                key: 'single:' + s.id + ':' + role,
+                title: s.job,
+                sub: 'Pole ' + scid + ' — single photo',
+                spanId: s.id,
+                photos: [{ role: role, url: p.url, name: role + '.jpg', file: null }],
+                single: 'pole'
+            };
+            refreshMapSelection();
+            runPipeline();
+        }
+        function selectSingleMid(spanId) {
+            var s = state.spans.find(function (x) { return x.id === spanId; });
+            var p = s && s.photos.find(function (x) { return x.role === 'midspan'; });
+            if (!p) return;
+            state.selected = {
+                key: 'single:' + s.id + ':midspan',
+                title: s.job,
+                sub: 'Midspan ' + s.pole_a_scid + ' ↔ ' + s.pole_b_scid + ' — single photo',
+                spanId: s.id,
+                photos: [{ role: 'midspan', url: p.url, name: 'midspan.jpg', file: null }],
+                single: 'midspan'
+            };
+            refreshMapSelection();
+            runPipeline();
+        }
+
+        // ------------------------------------------------------------------
+        // Custom span
+        // ------------------------------------------------------------------
+        var pendingSlot = null;
+        function renderCustomSlots() {
+            var wrap = document.getElementById('customSlots');
+            var c = state.custom;
+            var html = '';
+            [['pole_a', 'Pole A'], ['mid_1', 'Mid 1'], ['mid_2', 'Mid 2'], ['pole_b', 'Pole B']].forEach(function (pair, i) {
+                if (i > 0) html += '<span class="custom-link-line"></span>';
+                var f = c[pair[0]];
+                html += '<button type="button" class="custom-slot" data-slot="' + pair[0] + '">' +
+                    (f ? '<img src="' + esc(f._url) + '" alt="">' : '') +
+                    '<span class="slot-tag">' + pair[1] + '</span>' +
+                    (f ? '' : '<span class="slot-tag">+</span>') + '</button>';
+            });
+            wrap.innerHTML = html;
+            wrap.querySelectorAll('.custom-slot').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    pendingSlot = btn.getAttribute('data-slot');
+                    document.getElementById('slotFileInput').click();
+                });
+            });
+            document.getElementById('customRunBtn').disabled = !(c.pole_a && c.pole_b && c.mid_1);
+        }
+        document.getElementById('slotFileInput').addEventListener('change', function (e) {
+            var file = e.target.files[0];
+            e.target.value = '';
+            if (!file || !pendingSlot) return;
+            if (!file.type.startsWith('image/')) { showError('Please choose a photo file (JPEG/PNG).'); return; }
+            file._url = URL.createObjectURL(file);
+            state.custom[pendingSlot] = file;
+            pendingSlot = null;
+            renderCustomSlots();
+        });
+        document.getElementById('customClearBtn').addEventListener('click', function () {
+            Object.keys(state.custom).forEach(function (k) {
+                if (state.custom[k] && state.custom[k]._url) URL.revokeObjectURL(state.custom[k]._url);
+                state.custom[k] = null;
+            });
+            renderCustomSlots();
+        });
+        document.getElementById('customRunBtn').addEventListener('click', function () {
+            var c = state.custom;
+            if (!(c.pole_a && c.pole_b && c.mid_1)) return;
+            var photos = [{ role: 'pole_a', url: c.pole_a._url, name: c.pole_a.name, file: c.pole_a },
+                          { role: 'midspan', url: c.mid_1._url, name: c.mid_1.name, file: c.mid_1 }];
+            if (c.mid_2) photos.push({ role: 'midspan', url: c.mid_2._url, name: c.mid_2.name, file: c.mid_2 });
+            photos.push({ role: 'pole_b', url: c.pole_b._url, name: c.pole_b.name, file: c.pole_b });
+            state.selected = {
+                key: 'custom:' + photos.map(function (p) { return p.name; }).join('|'),
+                title: 'Custom span',
+                sub: (photos.length - 2) + ' midspan photo(s)',
+                photos: photos
+            };
+            refreshMapSelection();
+            runPipeline();
+        });
+
+        // ------------------------------------------------------------------
+        // Strip: MR-QC-style fitting (vertical fill, equal width, crop not squash)
+        // ------------------------------------------------------------------
+        var frames = [];   // per column: { el, bundle, img, svg, natW, natH, zoom, x, y, baseScale }
+
+        function buildStrip() {
+            var strip = document.getElementById('spanStrip');
+            document.getElementById('viewerEmpty').style.display = 'none';
+            strip.classList.add('show');
+            frames = [];
+            var html = '';
+            state.selected.photos.forEach(function (p, i) {
+                var isPole = p.role !== 'midspan';
+                var caption = p.role === 'pole_a' ? 'Pole A' : (p.role === 'pole_b' ? 'Pole B' : 'Midspan');
+                html += '<div class="span-frame" data-idx="' + i + '" data-role="' + p.role + '">' +
+                    '<div class="bundle"><img src="' + esc(p.url) + '" alt="' + esc(caption) + '" draggable="false"><svg aria-hidden="true"></svg></div>' +
+                    '<div class="frame-badge"><span class="role-badge ' + (isPole ? 'pole' : 'mid') + '">' + (isPole ? 'P' : 'M') + '</span>' +
+                    '<span class="frame-caption">' + caption + '</span></div>' +
+                    '</div>';
+            });
+            html += '<svg id="ribbonSvg" aria-hidden="true"></svg>';
+            strip.innerHTML = html;
+
+            strip.querySelectorAll('.span-frame').forEach(function (el) {
+                var idx = +el.getAttribute('data-idx');
+                var f = {
+                    el: el,
+                    bundle: el.querySelector('.bundle'),
+                    img: el.querySelector('img'),
+                    svg: el.querySelector('svg'),
+                    natW: 0, natH: 0, baseScale: 1, zoom: 1, x: 0, y: 0
+                };
+                frames[idx] = f;
+                f.img.addEventListener('load', function () { fitFrame(idx); redrawColumn(idx); redrawRibbons(); });
+                if (f.img.complete && f.img.naturalWidth) { fitFrame(idx); }
+                attachFrameInteraction(idx);
+            });
+
+            document.getElementById('viewerTitle').textContent = state.selected.title;
+            document.getElementById('viewerSub').textContent = state.selected.sub;
+            document.getElementById('stageChips').style.display = 'flex';
+            document.getElementById('layerToggles').style.display = 'flex';
+            // in single-photo mode the third stage is attachments/wires, not a span trace
+            setStageLabel('tracing', state.selected.single === 'pole' ? 'Attachments'
+                                   : state.selected.single === 'midspan' ? 'Wires' : 'Tracing');
+        }
+
+        function fitFrame(idx) {
+            var f = frames[idx];
+            if (!f || !f.img.naturalWidth) return;
+            f.natW = f.img.naturalWidth;
+            f.natH = f.img.naturalHeight;
+            var fw = f.el.clientWidth, fh = f.el.clientHeight;
+            if (!fw || !fh) return;
+            f.fitW = fw; f.fitH = fh;
+            f.baseScale = fh / f.natH;               // vertical fill
+            f.zoom = 1;
+            var w = f.natW * f.baseScale;
+            f.x = (fw - w) / 2;                       // center; negative = crop sides
+            f.y = 0;
+            f.img.style.width = f.natW + 'px';
+            f.img.style.height = f.natH + 'px';
+            applyFrameTransform(idx);
+        }
+
+        function frameScale(f) { return f.baseScale * f.zoom; }
+
+        function constrainFrame(idx) {
+            var f = frames[idx];
+            var fw = f.el.clientWidth, fh = f.el.clientHeight;
+            var s = frameScale(f);
+            var w = f.natW * s, h = f.natH * s;
+            // photo pans in both axes; an edge may be dragged at most 50% of the
+            // way into the frame, so half the frame is always covered by photo
+            var slackX = fw * 0.5, slackY = fh * 0.5;
+            f.x = Math.max(slackX - w, Math.min(slackX, f.x));
+            f.y = Math.max(slackY - h, Math.min(slackY, f.y));
+        }
+
+        function applyFrameTransform(idx) {
+            var f = frames[idx];
+            constrainFrame(idx);
+            f.bundle.style.transform = 'translate(' + f.x + 'px,' + f.y + 'px) scale(' + frameScale(f) + ')';
+        }
+
+        // Ease the photo back to its initial fit position (used when the user
+        // keeps zooming out at the 1x limit — an elastic "recenter" gesture).
+        function recenterFrame(idx) {
+            var f = frames[idx];
+            if (!f || !f.natW || f.anim) return;
+            var targetX = (f.el.clientWidth - f.natW * f.baseScale) / 2, targetY = 0;
+            function step() {
+                f.x += (targetX - f.x) * 0.18;
+                f.y += (targetY - f.y) * 0.18;
+                var done = Math.abs(f.x - targetX) < 0.5 && Math.abs(f.y - targetY) < 0.5;
+                if (done) { f.x = targetX; f.y = targetY; f.anim = null; }
+                f.bundle.style.transform = 'translate(' + f.x + 'px,' + f.y + 'px) scale(' + frameScale(f) + ')';
+                redrawRibbons();
+                if (!done) f.anim = requestAnimationFrame(step);
+                else redrawColumn(idx);
+            }
+            f.anim = requestAnimationFrame(step);
+        }
+        function cancelRecenter(f) {
+            if (f.anim) { cancelAnimationFrame(f.anim); f.anim = null; }
+        }
+
+        function attachFrameInteraction(idx) {
+            var f = frames[idx];
+            var el = f.el;
+            el.addEventListener('wheel', function (e) {
+                e.preventDefault();
+                if (!f.natW) return;
+                var rect = el.getBoundingClientRect();
+                var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                var old = frameScale(f);
+                var factor = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0011));
+                // never below 1x; zooming out AT the limit glides back to center
+                var newZoom = Math.max(1, Math.min(12, f.zoom * factor));
+                if (factor < 1 && newZoom <= 1) {
+                    f.zoom = 1;
+                    recenterFrame(idx);
+                    return;
+                }
+                cancelRecenter(f);
+                var ns = f.baseScale * newZoom;
+                if (Math.abs(ns - old) < 1e-6) return;
+                var ix = (mx - f.x) / old, iy = (my - f.y) / old;
+                f.zoom = newZoom;
+                f.x = mx - ix * ns;
+                f.y = my - iy * ns;
+                applyFrameTransform(idx);
+                redrawColumn(idx);
+                redrawRibbons();
+            }, { passive: false });
+
+            var drag = null;
+            el.addEventListener('mousedown', function (e) {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                cancelRecenter(f);
+                drag = { sx: e.clientX - f.x, sy: e.clientY - f.y };
+                el.classList.add('dragging');
+            });
+            window.addEventListener('mousemove', function (e) {
+                if (!drag) return;
+                f.x = e.clientX - drag.sx;
+                f.y = e.clientY - drag.sy;
+                applyFrameTransform(idx);
+                redrawRibbons();
+            });
+            window.addEventListener('mouseup', function () {
+                if (drag) {
+                    drag = null; el.classList.remove('dragging');
+                    redrawColumn(idx);   // re-clamp chips to the new visible crop
+                }
+            });
+        }
+
+        function setBusy(message) {
+            // inference progress lives OUTSIDE the photos: header status text + stage chips
+            var sub = document.getElementById('viewerSub');
+            sub.textContent = message || (state.selected ? state.selected.sub : '');
+        }
+
+        // ------------------------------------------------------------------
+        // Pipeline: Calibration -> Equipment -> Tracing
+        // ------------------------------------------------------------------
+        function setStage(stage, cls) {
+            var chip = document.querySelector('.stage-chip[data-stage="' + stage + '"]');
+            if (chip) { chip.classList.remove('running', 'done', 'error'); if (cls) chip.classList.add(cls); }
+        }
+        function setStageLabel(stage, text) {
+            var chip = document.querySelector('.stage-chip[data-stage="' + stage + '"]');
+            if (chip) chip.lastChild.textContent = text;
+        }
+
+        async function photoBlob(photo) {
+            if (photo.file) return photo.file;
+            var resp = await fetch(photo.url);
+            if (!resp.ok) throw new Error('Failed to fetch photo (' + resp.status + ')');
+            return await resp.blob();
+        }
+
+        async function errDetail(resp) {
+            try { var d = await resp.json(); return d.detail || ('Server error ' + resp.status); }
+            catch (e) { return 'Server error ' + resp.status; }
+        }
+
+        // ------------------------------------------------------------------
+        // Ground-truth overlay (local label store only; absent on the public
+        // deployment). GT chips render LEFT of the ruler line, predictions right.
+        // ------------------------------------------------------------------
+        async function loadGtOverlay(seq) {
+            var sel = state.selected;
+            document.getElementById('gtToggle').style.display = 'none';
+            if (!sel || !sel.spanId) return;
+            try {
+                var resp = await fetch('/api/spans/' + encodeURIComponent(sel.spanId) + '/gt');
+                if (!resp.ok) return;
+                var gt = await resp.json();
+                if (seq !== state.runSeq || !gt.available) return;
+                var p = gt.photos || {};
+                var mids = p.midspans || [];
+                var mi = 0;
+                sel.photos.forEach(function (photo, i) {
+                    var g = photo.role === 'midspan' ? mids[mi++] : p[photo.role];
+                    if (state.overlays[i]) state.overlays[i].gt = gtMarkers(g);
+                });
+                state.results.ground_truth = gt;
+                document.getElementById('gtToggle').style.display = '';
+                redrawAll();
+            } catch (e) {
+                console.warn('GT overlay unavailable', e);
+            }
+        }
+
+        async function runPipeline() {
+            hideError();
+            var seq = ++state.runSeq;
+            state.overlays = state.selected.photos.map(function () {
+                return { calibration: [], equipment: [], tracing: [], gt: [] };
+            });
+            state.tracePayload = null;
+            state.traceStyles = [];
+            state.heightFits = [];
+            state.results = {};
+            document.getElementById('jsonPre').textContent = 'Running…';
+            document.getElementById('jsonToggleBtn').disabled = true;
+            document.getElementById('downloadBtn').disabled = true;
+            ['calibration', 'equipment', 'tracing'].forEach(function (s) { setStage(s, null); });
+            buildStrip();
+
+            var cacheKey = state.selected.key;
+            var cached = state.cache[cacheKey];
+            if (cached) {
+                state.overlays = cached.overlays;
+                state.tracePayload = cached.tracePayload;
+                state.traceStyles = buildTraceStyles(cached.tracePayload);
+                state.results = cached.results;
+                ['calibration', 'equipment', 'tracing'].forEach(function (s) {
+                    setStage(s, cached.results[s + '_error'] ? 'error' : 'done');
+                });
+                document.getElementById('gtToggle').style.display =
+                    state.overlays.some(function (o) { return o.gt && o.gt.length; }) ? '' : 'none';
+                // replay the progressive reveal even for cached results
+                state.overlays.forEach(function (o) {
+                    markFresh(o.calibration); markFresh(o.equipment); markFresh(o.tracing);
+                });
+                state.animateRibbons = true;
+                redrawAll();
+                finishRun();
+                return;
+            }
+            loadGtOverlay(seq);   // async; fills overlays[i].gt when local GT exists
+
+            var photos = state.selected.photos;
+
+            // Stage 1: calibration on every photo
+            setStage('calibration', 'running');
+            setBusy('Running calibration…');
+            try {
+                await Promise.all(photos.map(async function (photo, i) {
+                    var blob = await photoBlob(photo);
+                    var fd = new FormData();
+                    fd.append('image', blob, photo.name);
+                    var t = photo.role === 'midspan' ? 'midspan' : 'pole';
+                    var resp = await fetch('/demo/predict?image_type=' + t + '&pipeline=calibration', { method: 'POST', body: fd });
+                    if (!resp.ok) throw new Error(await errDetail(resp));
+                    var data = await resp.json();
+                    if (seq !== state.runSeq) return;
+                    (state.results.calibration = state.results.calibration || [])[i] = data.results;
+                    // the equipment stage + pole-top chip reuse this photo's ruler fit
+                    state.heightFits[i] = fitHeightModel((data.results || {})['Ruler Markings']);
+                    state.overlays[i].calibration = markFresh(calibrationMarkers(data.results, state.heightFits[i]));
+                    redrawColumn(i);
+                }));
+                if (seq !== state.runSeq) return;
+                setStage('calibration', 'done');
+            } catch (e) {
+                if (seq !== state.runSeq) return;
+                console.error('Calibration failed', e);
+                state.results.calibration_error = String(e.message || e);
+                setStage('calibration', 'error');
+            }
+
+            // Stage 2: equipment annotation on pole photos
+            setStage('equipment', 'running');
+            setBusy('Running equipment annotation…');
+            try {
+                await Promise.all(photos.map(async function (photo, i) {
+                    if (photo.role === 'midspan') return;
+                    var blob = await photoBlob(photo);
+                    var fd = new FormData();
+                    fd.append('image', blob, photo.name);
+                    var resp = await fetch('/demo/predict?image_type=pole&pipeline=annotation', { method: 'POST', body: fd });
+                    if (!resp.ok) throw new Error(await errDetail(resp));
+                    var data = await resp.json();
+                    if (seq !== state.runSeq) return;
+                    (state.results.equipment = state.results.equipment || [])[i] = data.results;
+                    state.overlays[i].equipment = markFresh(equipmentMarkers(data.results, state.heightFits[i]));
+                    redrawColumn(i);
+                }));
+                if (seq !== state.runSeq) return;
+                setStage('equipment', 'done');
+            } catch (e) {
+                if (seq !== state.runSeq) return;
+                console.error('Equipment failed', e);
+                state.results.equipment_error = String(e.message || e);
+                setStage('equipment', 'error');
+            }
+
+            // Stage 3: full-span wire tracing, or per-photo attachments/wires in
+            // single-photo mode (map pole / midspan-triangle click)
+            if (state.selected.single) {
+                setStage('tracing', 'running');
+                setBusy(state.selected.single === 'pole' ? 'Detecting attachments…' : 'Detecting wires…');
+                try {
+                    var blobS = await photoBlob(photos[0]);
+                    var fdS = new FormData();
+                    fdS.append('image', blobS, photos[0].name);
+                    var urlS = state.selected.single === 'pole'
+                        ? '/demo/predict?image_type=pole&pipeline=attachments'
+                        : '/demo/predict?image_type=midspan&pipeline=annotation';
+                    var respS = await fetch(urlS, { method: 'POST', body: fdS });
+                    if (!respS.ok) throw new Error(await errDetail(respS));
+                    var dataS = await respS.json();
+                    if (seq !== state.runSeq) return;
+                    if (state.selected.single === 'pole') {
+                        state.results.attachments = dataS.results;
+                        state.overlays[0].tracing = markFresh(
+                            attachmentMarkers((dataS.results || {}).Attachments, state.heightFits[0]));
+                    } else {
+                        state.results.wires = dataS.results;
+                        state.overlays[0].tracing = markFresh(wireMarkers((dataS.results || {}).Wires));
+                    }
+                    setStage('tracing', 'done');
+                    redrawAll();
+                } catch (eS) {
+                    if (seq !== state.runSeq) return;
+                    console.error('Single-photo inference failed', eS);
+                    state.results.tracing_error = String(eS.message || eS);
+                    setStage('tracing', 'error');
+                    showError('Inference failed: ' + eS.message);
+                }
+                if (seq !== state.runSeq) return;
+                state.cache[cacheKey] = {
+                    overlays: state.overlays, tracePayload: null, results: state.results
+                };
+                finishRun();
+                return;
+            }
+
+            setStage('tracing', 'running');
+            setBusy('Running wire tracing…');
+            try {
+                var fd3 = new FormData();
+                for (var i = 0; i < photos.length; i++) {
+                    var blob3 = await photoBlob(photos[i]);
+                    if (photos[i].role === 'pole_a') fd3.append('pole_a', blob3, photos[i].name);
+                    else if (photos[i].role === 'pole_b') fd3.append('pole_b', blob3, photos[i].name);
+                    else fd3.append('midspans', blob3, photos[i].name);
+                }
+                var resp3 = await fetch('/demo/trace', { method: 'POST', body: fd3 });
+                if (!resp3.ok) throw new Error(await errDetail(resp3));
+                var payload = await resp3.json();
+                if (seq !== state.runSeq) return;
+                state.tracePayload = payload;
+                state.traceStyles = buildTraceStyles(payload);
+                state.results.tracing = payload;
+                payload.photos.forEach(function (pd, i) {
+                    state.overlays[i].tracing = markFresh(tracingMarkers(pd));
+                });
+                setStage('tracing', 'done');
+                state.animateRibbons = true;   // stagger the catenaries once
+                redrawAll();
+            } catch (e) {
+                if (seq !== state.runSeq) return;
+                console.error('Tracing failed', e);
+                state.results.tracing_error = String(e.message || e);
+                setStage('tracing', 'error');
+                showError('Wire tracing failed: ' + e.message);
+            }
+
+            if (seq !== state.runSeq) return;
+            state.cache[cacheKey] = {
+                overlays: state.overlays, tracePayload: state.tracePayload, results: state.results
+            };
+            finishRun();
+        }
+
+        function finishRun() {
+            setBusy(null);   // restore the span subtitle
+            document.getElementById('jsonPre').textContent = JSON.stringify(state.results, null, 2);
+            document.getElementById('jsonToggleBtn').disabled = false;
+            document.getElementById('downloadBtn').disabled = false;
+        }
+
+        // ------------------------------------------------------------------
+        // Marker builders (percent coords; chips drawn like before)
+        // ------------------------------------------------------------------
+        function traceStyle(ti) {
+            return (state.traceStyles && state.traceStyles[ti]) ||
+                   { cableType: 'unspecified', color: CABLE_COLORS.unspecified };
+        }
+
+        // Single-pole attachments (from /demo/predict pipeline=attachments):
+        // same wedge styling as the trace view, heights from the photo's ruler fit.
+        function attachmentMarkers(atts, heightAt) {
+            var out = [];
+            (atts || []).forEach(function (att) {
+                var ct = att.role === 'guying' ? 'guy'
+                       : (att.cable_type_fine || att.cable_type_hint || '');
+                var insulator = att.insulator_name || titleCase(att.hardware || '');
+                var ctName = ct ? cableName(ct) : '';
+                var redundant = !ctName || !insulator ||
+                                insulator.toLowerCase().indexOf(ctName.toLowerCase()) !== -1;
+                var label = redundant ? (insulator || ctName) : insulator + ' · ' + ctName;
+                if ((att.crossarm_k || 1) > 1) label = 'Crossarm ×' + att.crossarm_k + ' · ' + label;
+                var h = heightAt ? heightAt(att.y) : null;
+                out.push({
+                    x: +att.x, y: +att.y,
+                    heightLabel: h == null ? '' : formatFeetInches(h),
+                    label: label, labelColor: cableColor(ct || 'unspecified')
+                });
+            });
+            return out;
+        }
+
+        // Single-midspan wire crossings (heights already stamped by the backend)
+        function wireMarkers(wires) {
+            return (wires || []).map(function (w) {
+                return { x: +w.x, y: +w.y, heightLabel: w.height_label || '',
+                         label: w.name || 'Wire', labelColor: CABLE_COLORS.unspecified };
+            });
+        }
+
+        // Span-trace markers: shared builder, wired to this page's per-trace styles.
+        function tracingMarkers(pd) {
+            return SV.tracingMarkers(pd,
+                (state.tracePayload && state.tracePayload.traces) || [], traceStyle);
+        }
+
+        // ------------------------------------------------------------------
+        // Chip renderer (same chip style as before, in image-pixel space)
+        // ------------------------------------------------------------------
+        var NS = SV.NS;
+
+        // Mark a layer's markers as freshly detected: the next redraw pops them
+        // in one by one (the flag is consumed by that redraw, so later pans /
+        // zooms / toggles render instantly).
+        function markFresh(list) {
+            (list || []).forEach(function (m) { m.fresh = true; });
+            return list;
+        }
+
+        function visibleMarkersForColumn(idx) {
+            var o = state.overlays[idx] || {};
+            var markers = [];
+            if (state.layers.calibration) markers = markers.concat(o.calibration || []);
+            if (state.layers.equipment) markers = markers.concat(o.equipment || []);
+            if (state.layers.tracing) {
+                var tr = o.tracing || [];
+                // avoid double Pole Top when the calibration layer already shows it
+                if (state.layers.calibration && (o.calibration || []).some(function (m) { return m.isPoleTop; })) {
+                    tr = tr.filter(function (m) { return !m.isPoleTop; });
+                }
+                markers = markers.concat(tr);
+            }
+            return markers;
+        }
+
+        function redrawColumn(idx) {
+            var f = frames[idx];
+            if (!f || !f.natW) return;
+            var svg = f.svg;
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            var markers = visibleMarkersForColumn(idx);
+            var gtRaw = state.layers.gt ? (((state.overlays[idx] || {}).gt) || []) : [];
+            if (!markers.length && !gtRaw.length) return;
+            var natW = f.natW, natH = f.natH;
+            svg.setAttribute('viewBox', '0 0 ' + natW + ' ' + natH);
+            svg.setAttribute('width', natW);
+            svg.setAttribute('height', natH);
+
+            var s = 1 / frameScale(f);        // image px per screen px
+
+            // Yellow ruler guide: least-squares line through the calibration tick
+            // anchors, extended from the top of the ruler to the top of the photo.
+            if (state.layers.calibration) {
+                var calMarkers = (state.overlays[idx] || {}).calibration || [];
+                SV.drawRulerGuide(svg,
+                    calMarkers.filter(function (m) { return m.anchored; })
+                        .map(function (m) { return { x: m.x * natW / 100, y: m.y * natH / 100 }; }),
+                    2 * s,
+                    calMarkers.some(function (m) { return m.fresh; }) ? 'marker-pop' : null);
+            }
+
+            var fontPx = 10.5 * s;
+            var padX = 4.5 * s, padY = 2.6 * s;
+            var gap = 3 * s, margin = 4 * s;
+            var bodyH = fontPx + 2 * padY;
+            var minStep = bodyH + gap;
+            var ptrW = 8 * s;          // wedge tail that points back at the keypoint
+            var notchW = 3.5 * s;      // small notch on trailing chips of the same row
+            var chipGap = notchW + 0.8 * s;
+            // chips must land inside the VISIBLE crop, not just inside the image
+            var viewL = Math.max(margin, -f.x * s + margin);
+            var viewR = Math.min(natW - margin, (f.el.clientWidth - f.x) * s - margin);
+
+            var geom = { fontPx: fontPx, padX: padX, chipGap: chipGap, ptrW: ptrW,
+                         bodyH: bodyH, minStep: minStep, margin: margin, natH: natH };
+            var measured = SV.measureMarkers(markers, natW, natH, geom);
+
+            // freshly-detected markers pop in one by one, top to bottom; the
+            // fresh flag is consumed so pans/zooms/toggles redraw instantly
+            var popIdx = 0;
+            measured.forEach(function (m) {
+                if (m.fresh) m._popDelay = (popIdx++) * 90;
+            });
+            markers.forEach(function (m) { if (m.fresh) delete m.fresh; });
+
+            // Calibration ticks sit AT their point (wedge tip on the tick, no
+            // leader); everything else stacks in one shared ledger column.
+            var anchored = measured.filter(function (m) { return m.anchored; });
+            var items = measured.filter(function (m) { return !m.anchored; });
+
+            SV.stackRows(anchored, true, geom);
+            SV.stackRows(items, false, geom);
+
+            // Labels always sit to the RIGHT of their point.
+            var side = 'right';
+            var indentOf = function (it) { return it.child ? 18 * s : 0; };
+            var maxTotW = 0, maxPx = -Infinity;
+            items.forEach(function (it) {
+                maxTotW = Math.max(maxTotW, it.totW + indentOf(it));
+                maxPx = Math.max(maxPx, it.px);
+            });
+            var tipX = Math.max(viewL + ptrW,
+                                Math.min(viewR - ptrW - maxTotW, maxPx + 14 * s));
+
+            anchored.forEach(function (it) {
+                var chipLeft = Math.max(viewL + ptrW, Math.min(it.px + ptrW, viewR - it.totW));
+                // tail tip pinned to the EXACT tick point, even when the chip body
+                // was clamped/stacked away from it (holds at any zoom/pan)
+                SV.drawChipRow(svg, it, chipLeft, geom, side, it.px, it.py,
+                               { popDelay: it._popDelay });
+            });
+
+            // crossarm enclosure: one box around each run of nested wire rows
+            var run = null;
+            items.forEach(function (it) {
+                it.chipLeft = side === 'right'
+                    ? tipX + ptrW + indentOf(it)
+                    : tipX - ptrW - indentOf(it) - it.totW;
+                if (it.child) {
+                    run = run || [];
+                    run.push(it);
+                } else if (run) {
+                    SV.drawArmBox(svg, run, bodyH, s);
+                    run = null;
+                }
+            });
+            if (run) SV.drawArmBox(svg, run, bodyH, s);
+
+            items.forEach(function (it) {
+                // leader (point -> pointer apex) is drawn inside the chip row;
+                // crossarm children carry no leader — they nest under their arm
+                SV.drawChipRow(svg, it, it.chipLeft, geom, side, it.px, it.py,
+                               { noPointer: !!it.child, popDelay: it._popDelay });
+            });
+
+            // ---- Ground-truth ledger: GT chips stack LEFT of the ruler line,
+            // predictions stay right — same y = same physical object, so a
+            // left/right pair reads as agreement and a lone chip as a miss.
+            if (gtRaw.length) {
+                var gtItems = SV.measureMarkers(gtRaw, natW, natH, geom);
+                SV.stackRows(gtItems, false, geom);
+                var minPx = Infinity, maxTotWGt = 0;
+                gtItems.forEach(function (it) {
+                    minPx = Math.min(minPx, it.px);
+                    maxTotWGt = Math.max(maxTotWGt, it.totW);
+                });
+                var tipXGt = Math.max(viewL + ptrW + maxTotWGt,
+                                      Math.min(viewR - ptrW, minPx - 14 * s));
+                gtItems.forEach(function (it) {
+                    SV.drawChipRow(svg, it, tipXGt - ptrW - it.totW, geom, 'left',
+                                   it.px, it.py);
+                });
+            }
+        }
+
+
+        function redrawAll() {
+            frames.forEach(function (f, i) {
+                // re-fit un-zoomed frames whose measured height went stale
+                if (f && f.natH && f.zoom === 1 &&
+                    Math.abs(f.el.clientHeight - f.natH * frameScale(f)) > 2) {
+                    fitFrame(i);
+                }
+                redrawColumn(i);
+            });
+            redrawRibbons();
+        }
+
+        // ------------------------------------------------------------------
+        // Cross-photo trace ribbons (MR-QC style polylines across the strip)
+        // ------------------------------------------------------------------
+        function pointOnStrip(colIdx, xPct, yPct) {
+            var f = frames[colIdx];
+            if (!f || !f.natW) return null;
+            var s = frameScale(f);
+            var strip = document.getElementById('spanStrip');
+            var frameLeft = f.el.offsetLeft;
+            return {
+                x: frameLeft + f.x + (xPct / 100) * f.natW * s,
+                y: f.el.offsetTop + f.y + (yPct / 100) * f.natH * s,
+                clampMin: frameLeft, clampMax: frameLeft + f.el.clientWidth
+            };
+        }
+
+        function redrawRibbons() {
+            var svg = document.getElementById('ribbonSvg');
+            if (!svg) return;
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            if (!state.layers.tracing || !state.tracePayload) return;
+            var payload = state.tracePayload;
+            var strip = document.getElementById('spanStrip');
+            svg.setAttribute('viewBox', '0 0 ' + strip.clientWidth + ' ' + strip.clientHeight);
+
+            var nTraces = (payload.traces || []).length;
+            for (var ti = 0; ti < nTraces; ti++) {
+                var trc = payload.traces[ti];
+                // dustbinned traces (no pole attachment on either side) draw nothing
+                if (!trc || (!trc.pole_a_attachment && !trc.pole_b_attachment)) continue;
+                var pts = [];
+                payload.photos.forEach(function (pd, colIdx) {
+                    if (pd.role === 'midspan') {
+                        (pd.wires || []).forEach(function (w) {
+                            if (w.trace_index === ti) {
+                                var p = pointOnStrip(colIdx, +w.x, +w.y);
+                                if (p) pts.push(p);
+                            }
+                        });
+                    } else {
+                        (pd.attachments || []).forEach(function (att) {
+                            if ((att.trace_indices || []).indexOf(ti) !== -1) {
+                                var p = pointOnStrip(colIdx, +att.x, +att.y);
+                                if (p) pts.push(p);
+                            }
+                        });
+                    }
+                });
+                if (pts.length < 2) continue;
+                var st = traceStyle(ti);
+                var color = st.color;
+                for (var k = 0; k + 1 < pts.length; k++) {
+                    var a = pts[k], b = pts[k + 1];
+                    var ax = Math.max(a.clampMin, Math.min(a.clampMax, a.x));
+                    var bx = Math.max(b.clampMin, Math.min(b.clampMax, b.x));
+                    // wire sag: quadratic catenary approximation, control point
+                    // dropped below the chord midpoint proportionally to the run
+                    var sag = Math.min(60, Math.abs(bx - ax) * 0.10);
+                    var mx = (ax + bx) / 2;
+                    var my = (a.y + b.y) / 2 + sag * 2;   // control pt: curve midpoint sags by `sag`
+                    var path = document.createElementNS(NS, 'path');
+                    path.setAttribute('d', 'M ' + ax + ' ' + a.y + ' Q ' + mx + ' ' + my + ' ' + bx + ' ' + b.y);
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke', color);
+                    path.setAttribute('stroke-width', '2.2');
+                    path.setAttribute('opacity', '0.7');
+                    if (state.animateRibbons) {
+                        path.setAttribute('class', 'ribbon-pop');
+                        path.style.animationDelay = (250 + ti * 120) + 'ms';
+                    }
+                    svg.appendChild(path);
+                }
+            }
+            state.animateRibbons = false;   // one-shot: pans/zooms redraw instantly
+        }
+
+        // ------------------------------------------------------------------
+        // Layer toggles, JSON drawer, download, misc
+        // ------------------------------------------------------------------
+        document.querySelectorAll('.layer-toggle input').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                state.layers[cb.getAttribute('data-layer')] = cb.checked;
+                redrawAll();
+            });
+        });
+
+        var resizeTimer = null;
+        function refitAll() {
+            frames.forEach(function (_, i) { fitFrame(i); redrawColumn(i); });
+            redrawRibbons();
+            if (map) map.invalidateSize();
+        }
+        window.addEventListener('resize', function () {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(refitAll, 150);
+        });
+        // Frames must re-fit whenever their box changes (panel collapse, late
+        // layout settle) — window resize alone misses those. Watch the strip AND
+        // poll as a backstop: some late flex settles escape both events.
+        new ResizeObserver(function () {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(refitAll, 60);
+        }).observe(document.getElementById('spanStrip'));
+        setInterval(function () {
+            var stale = frames.some(function (f) {
+                if (!f || !f.img.naturalWidth || !f.el.clientHeight) return false;
+                if (!f.fitH) return true;   // fit never succeeded (frame measured 0 at load)
+                return Math.abs(f.el.clientHeight - f.fitH) > 2 || Math.abs(f.el.clientWidth - f.fitW) > 2;
+            });
+            if (stale) refitAll();
+        }, 700);
+
+        document.getElementById('mapCollapseBtn').addEventListener('click', function () {
+            var panel = document.querySelector('.left-panel');
+            var collapsed = panel.classList.toggle('collapsed');
+            this.textContent = collapsed ? '⟩ Map' : '⟨ Map';
+        });
+
+        document.getElementById('jsonToggleBtn').addEventListener('click', function () {
+            document.getElementById('jsonDrawer').classList.toggle('show');
+        });
+        document.getElementById('jsonCloseBtn').addEventListener('click', function () {
+            document.getElementById('jsonDrawer').classList.remove('show');
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', async function () {
+            var btn = this;
+            if (!frames.length) return;
+            btn.disabled = true;
+            try {
+                var GAP = 8;
+                var targetH = Math.min(2400, Math.max.apply(null, frames.map(function (f) { return f.natH || 0; })));
+                var widths = frames.map(function (f) { return Math.round(targetH * f.natW / f.natH); });
+                var totalW = widths.reduce(function (a, b) { return a + b; }, 0) + GAP * (frames.length - 1);
+                var canvas = document.createElement('canvas');
+                canvas.width = totalW; canvas.height = targetH;
+                var ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                var x = 0;
+                for (var i = 0; i < frames.length; i++) {
+                    ctx.drawImage(frames[i].img, x, 0, widths[i], targetH);
+                    var svg = frames[i].svg;
+                    if (svg && svg.childNodes.length) {
+                        var clone = svg.cloneNode(true);
+                        clone.setAttribute('xmlns', NS);
+                        clone.setAttribute('width', String(widths[i]));
+                        clone.setAttribute('height', String(targetH));
+                        var markup = new XMLSerializer().serializeToString(clone);
+                        var blobUrl = URL.createObjectURL(new Blob([markup], { type: 'image/svg+xml;charset=utf-8' }));
+                        try {
+                            var overlayImg = new Image();
+                            await new Promise(function (res, rej) { overlayImg.onload = res; overlayImg.onerror = rej; overlayImg.src = blobUrl; });
+                            ctx.drawImage(overlayImg, x, 0, widths[i], targetH);
+                        } finally { URL.revokeObjectURL(blobUrl); }
+                    }
+                    x += widths[i] + GAP;
+                }
+                var link = document.createElement('a');
+                var base = (state.selected ? state.selected.title : 'span').replace(/[^\w.-]+/g, '-');
+                link.href = canvas.toDataURL('image/jpeg', 0.9);
+                link.download = base + '-full-inference-span.jpg';
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+            } catch (e) {
+                console.error('Download failed', e);
+                showError('Could not download the annotated span.');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        function showError(msg) {
+            var el = document.getElementById('errorBanner');
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+        function hideError() { document.getElementById('errorBanner').style.display = 'none'; }
+
+        (function () {
+            var burger = document.getElementById('hamburgerBtn');
+            var navLinks = document.getElementById('navLinks');
+            if (burger && navLinks) {
+                burger.addEventListener('click', function () {
+                    burger.classList.toggle('open');
+                    navLinks.classList.toggle('open');
+                });
+            }
+        })();
+
+        window.addEventListener('error', function (e) {
+            showError('JS error: ' + e.message + ' @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+            showError('Unhandled rejection: ' + (e.reason && e.reason.message || e.reason));
+        });
+
+        loadSpans();
+    </script>
+</body>
+</html>

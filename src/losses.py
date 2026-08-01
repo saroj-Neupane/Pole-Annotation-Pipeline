@@ -12,13 +12,14 @@ class FocalHeatmapLoss(torch.nn.Module):
         self.alpha = alpha
         self.beta = beta
     
-    def forward(self, pred, target):
+    def forward(self, pred, target, mask=None):
         """
         pred: predicted heatmaps (B, K, H, W) - output of sigmoid
         target: ground truth heatmaps (B, K, H, W)
+        mask: optional (B, K, H, W) 1=supervise/0=ignore (Focal ignores it; kept for API parity)
         """
         pred = torch.clamp(pred, min=1e-7, max=1-1e-7)
-        
+
         # Positive locations (peaks) - use threshold > 0.5 for better peak detection
         pos_mask = (target > 0.5).float()
         # Negative locations (background)
@@ -80,20 +81,27 @@ class UnimodalHeatmapLoss(torch.nn.Module):
         
         return normalized_variance.mean()
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, mask=None):
         """
         pred: predicted heatmaps (B, K, H, W) - output of sigmoid
         target: ground truth heatmaps (B, K, H, W)
+        mask: optional (B, K, H, W) per-pixel 1=supervise / 0=ignore. None => supervise all
+            (an all-ones mask is mathematically identical to the unmasked .mean(), so the
+            default path is byte-for-byte unchanged).
         """
         # Base MSE loss
         mse = (pred - target) ** 2
-        
+
         # Weight positive regions more heavily
         pos_mask = (target > 0.5).float()
         weights = torch.ones_like(target)
         weights = weights + pos_mask * (self.pos_weight - 1)
-        
-        weighted_mse = (mse * weights).mean()
+
+        if mask is None:
+            weighted_mse = (mse * weights).mean()
+        else:
+            # ignore-region: zero loss where mask==0, normalize by supervised-pixel count
+            weighted_mse = (mse * weights * mask).sum() / mask.sum().clamp(min=1)
         vertical_focus_loss = self._compute_vertical_focus_loss(pred)
         base_scale = weighted_mse.detach() + 1e-8
         return weighted_mse + self.vertical_focus_weight * base_scale * vertical_focus_loss

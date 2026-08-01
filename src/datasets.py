@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import torch
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
@@ -15,6 +15,9 @@ from .config import (
     GAUSSIAN_SIGMA_X, GAUSSIAN_SIGMA_Y, NUM_KEYPOINTS,
     POLE_TOP_HEATMAP_HEIGHT, POLE_TOP_HEATMAP_WIDTH,
     POLE_TOP_RESIZE_HEIGHT, POLE_TOP_RESIZE_WIDTH,
+    WIRE_STRIP_RESIZE_HEIGHT, WIRE_STRIP_RESIZE_WIDTH,
+    WIRE_STRIP_HEATMAP_HEIGHT, WIRE_STRIP_HEATMAP_WIDTH,
+    WIRE_STRIP_GAUSSIAN_SIGMA_X, WIRE_STRIP_GAUSSIAN_SIGMA_Y,
     RULER_DETECTION_CONFIG,
     INFERENCE_RULER_CONF_THRESHOLD,
     INFERENCE_MAX_DETECTIONS,
@@ -635,3 +638,218 @@ class EquipmentKeypointDataset(Dataset):
         new_coords = [_apply_transform_to_keypoint(kp_x, kp_y, M, img_w, img_h)
                       for kp_x, kp_y in kp_coords]
         return img_transformed, new_coords
+
+
+def _parse_wire_strip_label(label_path: Path) -> Tuple[List[float], float]:
+    """Return normalized wire y positions (0-1) and PPI from a strip label file."""
+    wire_ys: List[float] = []
+    ppi = 0.0
+    if not label_path.exists():
+        return wire_ys, ppi
+    for line in label_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('# PPI='):
+            try:
+                ppi = float(line.split('=')[1])
+            except (ValueError, IndexError):
+                ppi = 0.0
+            continue
+        if line.startswith('#'):
+            continue
+        try:
+            wire_ys.append(float(line.split()[0]))  # tolerate a trailing tier tag
+        except ValueError:
+            continue
+    return wire_ys, ppi
+
+
+def _parse_wire_strip_label_tiered(label_path: Path) -> Tuple[List[Tuple[float, bool]], float]:
+    """Tier-tagged strip label: lines are 'y_norm TAG' (TAG=P primary / N non-primary).
+
+    Returns [(y_norm, is_primary)] and PPI. Used by the ignore-region (loss-mask) experiment;
+    untagged lines default to non-primary so the parser degrades gracefully.
+    """
+    wires: List[Tuple[float, bool]] = []
+    ppi = 0.0
+    if not label_path.exists():
+        return wires, ppi
+    for line in label_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('# PPI='):
+            try:
+                ppi = float(line.split('=')[1])
+            except (ValueError, IndexError):
+                ppi = 0.0
+            continue
+        if line.startswith('#'):
+            continue
+        parts = line.split()
+        try:
+            y = float(parts[0])
+        except (ValueError, IndexError):
+            continue
+        is_prim = len(parts) > 1 and parts[1].upper().startswith('P')
+        wires.append((y, is_prim))
+    return wires, ppi
+
+
+class WireStripDataset(Dataset):
+    """Dataset for midspan wire height detection on ruler column strips.
+
+    Builds a single-channel heatmap with Gaussians at each wire y (collinear at strip center).
+    """
+
+    def __init__(self, image_dir, label_dir, transform=None, geometric_augmentations=None,
+                 resize_height=WIRE_STRIP_RESIZE_HEIGHT, resize_width=WIRE_STRIP_RESIZE_WIDTH,
+                 heatmap_height=WIRE_STRIP_HEATMAP_HEIGHT, heatmap_width=WIRE_STRIP_HEATMAP_WIDTH,
+                 min_wires=1, flipud_p=0.0, sigma_y=None, tier_aware=False, ignore_half_rows=None,
+                 target_mode='blob'):
+        self.image_dir = Path(image_dir)
+        self.label_dir = Path(label_dir)
+        self.transform = transform
+        self.geometric_augmentations = geometric_augmentations or {}
+        self.resize_height = resize_height
+        self.resize_width = resize_width
+        self.heatmap_height = heatmap_height
+        self.heatmap_width = heatmap_width
+        self.min_wires = min_wires
+        self.flipud_p = flipud_p  # vertical-flip aug prob (train only); valid for a symmetric strip
+        # tier_aware: parse 'y TAG' labels, supervise only non-primary, IGNORE a band around each
+        # primary in the loss (no target blob, no penalty). Default off => legacy behavior.
+        self.tier_aware = tier_aware
+        # target_mode: 'blob' = legacy centred 2D Gaussian at strip centre (deployed); 'ridge' = a
+        # full-width horizontal Gaussian band at each wire y (the wire IS a line across the strip).
+        # Pair 'ridge' with a full-width readout to use the periphery the 3x widening brought in.
+        self.target_mode = target_mode
+
+        self.sigma_x = WIRE_STRIP_GAUSSIAN_SIGMA_X
+        self.sigma_y = sigma_y if sigma_y is not None else WIRE_STRIP_GAUSSIAN_SIGMA_Y
+        self.ignore_half_rows = int(round(3 * self.sigma_y)) if ignore_half_rows is None else int(ignore_half_rows)
+
+        self.image_files = []
+        filtered = 0
+        for img_path in sorted(self.image_dir.glob('*.jpg')):
+            label_path = self.label_dir / f'{img_path.stem}.txt'
+            if tier_aware:
+                wires, _ = _parse_wire_strip_label_tiered(label_path)
+                n_sup = sum(1 for _, p in wires if not p)  # supervised = non-primary
+            else:
+                wire_ys, _ = _parse_wire_strip_label(label_path)
+                n_sup = len(wire_ys)
+            if n_sup >= min_wires:
+                self.image_files.append(img_path)
+            else:
+                filtered += 1
+
+        if not self.image_files:
+            raise RuntimeError(
+                f'No wire strip images with >={min_wires} wires found in {self.image_dir} '
+                f'(filtered {filtered})'
+            )
+
+        x_range = np.arange(self.heatmap_width)
+        y_range = np.arange(self.heatmap_height)
+        self.x_grid, self.y_grid = np.meshgrid(x_range, y_range)
+        print(f'WireStripDataset: {len(self.image_files)} strips (filtered {filtered}), '
+              f'sigma_y={self.sigma_y:.1f}, flipud_p={self.flipud_p}, '
+              f'tier_aware={self.tier_aware}, target_mode={self.target_mode}'
+              + (f', ignore_half_rows={self.ignore_half_rows}' if self.tier_aware else ''))
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = self.image_files[idx]
+        img = cv2.imread(str(img_path))
+        if img is None:
+            raise FileNotFoundError(f'Unable to read: {img_path}')
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = img.shape[:2]
+
+        label_path = self.label_dir / f'{img_path.stem}.txt'
+        if self.tier_aware:
+            wires, ppi = _parse_wire_strip_label_tiered(label_path)
+            wire_y_px = [y * h for y, _ in wires]
+            is_prim = [p for _, p in wires]
+        else:
+            wire_y_norms, ppi = _parse_wire_strip_label(label_path)
+            wire_y_px = [y * h for y in wire_y_norms]
+            is_prim = [False] * len(wire_y_px)
+
+        # Vertical flip (train only): a strip read top-down or bottom-up are both valid
+        # wire configurations, so flipping doubles effective data without distortion.
+        if self.flipud_p and np.random.rand() < self.flipud_p:
+            img = np.ascontiguousarray(img[::-1])
+            wire_y_px = [(h - 1) - y for y in wire_y_px]
+
+        if self.geometric_augmentations and self.transform:
+            img, wire_y_px = self._apply_geometric_augmentations(img, wire_y_px, w, h)
+            h, w = img.shape[:2]
+
+        heatmap = np.zeros((self.heatmap_height, self.heatmap_width), dtype=np.float32)
+        cx = (self.heatmap_width - 1) / 2.0
+        scale_y = (self.heatmap_height - 1) / max(h - 1, 1)
+        sup_y_px, prim_cy = [], []
+        for y_px, prim in zip(wire_y_px, is_prim):
+            cy = y_px * scale_y
+            if prim:                         # primary: no target blob (ignored in loss below)
+                prim_cy.append(cy)
+                continue
+            sup_y_px.append(y_px)
+            if self.target_mode == 'ridge':
+                # full-width horizontal ridge: Gaussian in y, uniform across all x
+                gauss = np.exp(-((self.y_grid - cy) ** 2) / (2 * self.sigma_y ** 2))
+            else:
+                gauss = np.exp(
+                    -(((self.x_grid - cx) ** 2) / (2 * self.sigma_x ** 2)
+                      + ((self.y_grid - cy) ** 2) / (2 * self.sigma_y ** 2))
+                )
+            heatmap = np.maximum(heatmap, gauss)
+
+        if self.transform:
+            img = self.transform(img)
+        else:
+            img = transforms.ToTensor()(img)
+
+        scale_x = (self.resize_width - 1) / max(w - 1, 1)
+        scale_y_kp = (self.resize_height - 1) / max(h - 1, 1)
+        first_y = sup_y_px[0] if sup_y_px else (wire_y_px[0] if wire_y_px else 0.0)
+        kp_resized = np.array([[w / 2 * scale_x, first_y * scale_y_kp]], dtype=np.float32)
+        vis = np.array([[1.0]], dtype=np.float32)
+
+        out = [
+            img,
+            torch.from_numpy(heatmap[None]),
+            torch.from_numpy(kp_resized),
+            torch.from_numpy(vis),
+            torch.tensor([h, w, h], dtype=torch.float32),
+            torch.tensor([ppi], dtype=torch.float32),
+        ]
+        if self.tier_aware:
+            # ignore-region loss mask: 0 in a band around each primary, but re-protect any row
+            # carrying a (non-primary) target blob so coincident non-primaries stay supervised.
+            mask = np.ones((self.heatmap_height, self.heatmap_width), dtype=np.float32)
+            ih, H = self.ignore_half_rows, self.heatmap_height
+            for cy in prim_cy:
+                lo = max(0, int(round(cy - ih)))
+                hi = min(H, int(round(cy + ih)) + 1)
+                mask[lo:hi, :] = 0.0
+            mask[heatmap > 0.1] = 1.0
+            out.append(torch.from_numpy(mask[None]))
+        return tuple(out)
+
+    def _apply_geometric_augmentations(self, img, wire_y_px, img_w, img_h):
+        M = _build_augmentation_matrix(img_w, img_h, self.geometric_augmentations)
+        img_transformed = cv2.warpAffine(
+            img, M, (img_w, img_h), borderMode=cv2.BORDER_REFLECT_101, flags=cv2.INTER_LINEAR
+        )
+        center_x = img_w / 2.0
+        new_ys = []
+        for y_px in wire_y_px:
+            _, y_new = _apply_transform_to_keypoint(center_x, y_px, M, img_w, img_h)
+            new_ys.append(y_new)
+        return img_transformed, new_ys

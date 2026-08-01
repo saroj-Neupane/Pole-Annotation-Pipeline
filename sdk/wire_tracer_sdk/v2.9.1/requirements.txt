@@ -1,0 +1,7 @@
+# Wire-tracer package — runtime dependencies (Python 3.12, CPU-only).
+# No torch, no ultralytics, no scipy. The Hungarian matcher and the strip peak
+# finder are reimplemented in pure numpy (wire_tracer/numpy_ops.py).
+numpy>=1.26,<3
+onnxruntime>=1.18,<2
+opencv-python-headless>=4.9,<5
+Pillow>=10,<12

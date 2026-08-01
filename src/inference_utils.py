@@ -26,7 +26,17 @@ from .config import (
     POLE_TOP_WEIGHT_ALONE,
     POLE_PHOTO_CONFIDENCE_WEIGHTS,
     INFERENCE_RULER_MARKING_WEIGHTS,
-    INFERENCE_POLE_TOP_WEIGHTS
+    INFERENCE_POLE_TOP_WEIGHTS,
+    INFERENCE_MIDSPAN_WIRE_STRIP_WEIGHTS,
+    WIRE_STRIP_RESIZE_HEIGHT,
+    WIRE_STRIP_RESIZE_WIDTH,
+    WIRE_STRIP_HEATMAP_HEIGHT,
+    WIRE_STRIP_HEATMAP_WIDTH,
+    WIRE_STRIP_PEAK_MIN_DISTANCE,
+    WIRE_STRIP_PEAK_THRESHOLD,
+    WIRE_STRIP_PEAK_HEIGHT,
+    WIRE_STRIP_PEAK_PROMINENCE,
+    WIRE_STRIP_PROFILE_BAND,
 )
 
 # Only import interpolate_keypoints if interpolation is enabled
@@ -49,6 +59,71 @@ POLE_TOP_PREPROCESS = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
 ])
+
+WIRE_STRIP_PREPROCESS = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((WIRE_STRIP_RESIZE_HEIGHT, WIRE_STRIP_RESIZE_WIDTH)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+])
+
+
+def _heatmap_y_peaks(hm_2d: np.ndarray, min_distance: int, threshold: float) -> List[int]:
+    """Legacy greedy peak finder (row-wise max profile, segment-scan argmax).
+
+    Kept for back-compat. Manufactures ~1 peak per ``min_distance`` window whenever
+    the profile is above threshold, which floods false positives on a busy heatmap.
+    Prefer ``extract_strip_wire_peaks`` (find_peaks + prominence) for the strip model.
+    """
+    profile = hm_2d.max(axis=1)
+    peaks: List[int] = []
+    n = len(profile)
+    i = 0
+    while i < n:
+        end = min(i + min_distance, n)
+        segment = profile[i:end]
+        if segment.size == 0:
+            break
+        local_peak = int(segment.argmax()) + i
+        if profile[local_peak] >= threshold:
+            peaks.append(local_peak)
+            i = local_peak + min_distance
+        else:
+            i += min_distance
+    return peaks
+
+
+def strip_column_profile(hm_2d: np.ndarray, band: int = WIRE_STRIP_PROFILE_BAND) -> np.ndarray:
+    """1-D column profile = mean over the central ``±band`` columns of the strip heatmap.
+
+    Wires are horizontal lines centred on the ruler column, so the central-band mean
+    captures their energy while suppressing single-pixel edge noise that a plain
+    ``max(axis=1)`` would amplify into false peaks.
+    """
+    w = hm_2d.shape[1]
+    cen = w // 2
+    lo = max(cen - band, 0)
+    hi = min(cen + band, w)
+    return hm_2d[:, lo:hi].mean(axis=1)
+
+
+def extract_strip_wire_peaks(
+    hm_2d: np.ndarray,
+    min_distance: int = WIRE_STRIP_PEAK_MIN_DISTANCE,
+    height: float = WIRE_STRIP_PEAK_HEIGHT,
+    prominence: float = WIRE_STRIP_PEAK_PROMINENCE,
+    band: int = WIRE_STRIP_PROFILE_BAND,
+) -> Tuple[List[int], np.ndarray]:
+    """Find wire y-peaks from a strip heatmap via central-band profile + scipy.find_peaks.
+
+    Returns (peak_row_indices, profile). ``prominence`` is the key precision lever:
+    it requires each peak to stand out from its surroundings, which removes the
+    spurious peaks the legacy greedy scan produced (test F1@2in 0.366 -> 0.824).
+    """
+    from scipy.signal import find_peaks
+    profile = strip_column_profile(hm_2d, band)
+    peaks, _ = find_peaks(profile, height=height, distance=min_distance, prominence=prominence)
+    return peaks.tolist(), profile
 
 def calculate_weighted_confidence(keypoints: List[Dict[str, Any]], weights: Dict[str, float]) -> float:
     """
@@ -133,6 +208,106 @@ def load_pole_top_model(
     model.eval()
     print("Pole top keypoint model loaded with FP32 precision")
     return model
+
+
+@torch.no_grad()
+def load_wire_strip_model(
+    weights_path: str | Path | None = None,
+    device: Optional[torch.device] = None,
+    heatmap_size: Optional[Tuple[int, int]] = None,
+) -> KeypointDetector:
+    """Load trained midspan wire strip HRNet model (single-channel multi-peak heatmap).
+
+    heatmap_size: (H, W) override for checkpoints trained at a non-config resolution
+    (e.g. (1740, 96)); must match the resize_hw passed to infer_wires_on_strip.
+    """
+    if weights_path is None:
+        weights_path = INFERENCE_MIDSPAN_WIRE_STRIP_WEIGHTS
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = KeypointDetector(
+        num_keypoints=1,
+        heatmap_size=tuple(heatmap_size) if heatmap_size else (WIRE_STRIP_HEATMAP_HEIGHT, WIRE_STRIP_HEATMAP_WIDTH),
+        weights_path=HRNET_WEIGHTS_PATH,
+    )
+    ckpt = torch.load(weights_path, map_location=device)
+    state_dict = ckpt['model_state_dict'] if isinstance(ckpt, dict) and 'model_state_dict' in ckpt else ckpt
+    model.load_state_dict(state_dict)
+    model.to(device)
+    model.float()
+    model.eval()
+    print(f"Wire strip model loaded from {weights_path}")
+    return model
+
+
+@torch.no_grad()
+def infer_wires_on_strip(
+    model: KeypointDetector,
+    strip_rgb: np.ndarray,
+    device: torch.device,
+    min_distance: int = WIRE_STRIP_PEAK_MIN_DISTANCE,
+    height: float = WIRE_STRIP_PEAK_HEIGHT,
+    prominence: float = WIRE_STRIP_PEAK_PROMINENCE,
+    min_peaks: Optional[int] = None,
+    relax_heights: Tuple[float, ...] = (0.30, 0.20, 0.10),
+    resize_hw: Optional[Tuple[int, int]] = None,
+) -> Tuple[List[Dict[str, float]], np.ndarray]:
+    """
+    Run wire height inference on a ruler column strip (RGB).
+
+    Peaks are extracted with the central-band-mean + find_peaks(prominence) detector
+    (``extract_strip_wire_peaks``), which is far more precise than the legacy greedy
+    scan (test F1@2in 0.366 -> 0.824).
+
+    min_peaks: COUNT-GUIDED ADAPTIVE extraction — if fewer than this many peaks clear
+    `height`, retry at each `relax_heights` threshold (same distance/prominence, no extra
+    model pass) until the count is plausible. The caller supplies the count prior (e.g.
+    min(#A, #B) conductor pole nodes: nearly every span wire reaches both poles, so a
+    lower peak count means the strip MISSED wires — unrecoverable downstream — while a
+    false extra peak is absorbed by the matcher dustbin. None = fixed threshold (legacy).
+
+    Returns:
+        wires: list of dicts with y (px), y_norm (0-1), conf
+        heatmap: predicted heatmap (HEATMAP_H x HEATMAP_W)
+    """
+    h, w = strip_rgb.shape[:2]
+    if resize_hw is not None:
+        # non-config checkpoint resolution: matching preprocess + physically scaled peak spacing
+        pre = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize(tuple(resize_hw)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ])
+        tensor = pre(strip_rgb).unsqueeze(0).to(device)
+        if min_distance == WIRE_STRIP_PEAK_MIN_DISTANCE:
+            min_distance = max(2, int(round(min_distance * resize_hw[0] / WIRE_STRIP_RESIZE_HEIGHT)))
+    else:
+        tensor = WIRE_STRIP_PREPROCESS(strip_rgb).unsqueeze(0).to(device)
+    logits = model(tensor)
+    heatmap = torch.sigmoid(logits)[0, 0].detach().cpu().numpy()
+
+    peaks, profile = extract_strip_wire_peaks(
+        heatmap, min_distance=min_distance, height=height, prominence=prominence
+    )
+    if min_peaks is not None and len(peaks) < min_peaks:
+        for relaxed in relax_heights:
+            peaks, profile = extract_strip_wire_peaks(
+                heatmap, min_distance=min_distance, height=relaxed, prominence=prominence
+            )
+            if len(peaks) >= min_peaks:
+                break
+    hm_h = heatmap.shape[0]
+    wires = []
+    for y_hm in peaks:
+        y_px = y_hm / max(hm_h - 1, 1) * (h - 1) if h > 1 else float(y_hm)
+        wires.append({
+            'y': float(y_px),
+            'y_norm': float(y_px / max(h - 1, 1)) if h > 1 else 0.0,
+            'conf': float(profile[y_hm]),
+        })
+    return wires, heatmap
 
 
 def infer_keypoints_on_crop(

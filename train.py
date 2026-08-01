@@ -30,12 +30,12 @@ from datetime import datetime
 from src.training_utils import (
     train_pole_detector,
     train_ruler_detector,
+    train_midspan_wire_strip_detector,
     train_equipment_detector,
-    train_attachment_detector,
+    train_unified_pole_detection,
     train_ruler_marking_detector,
     train_pole_top_detector,
     train_equipment_keypoint_detector,
-    train_attachment_keypoint_detector,
     clear_yolo_disk_cache_from_other_datasets,
 )
 from src.config import RUNS_DIR, KEYPOINT_MODEL_TO_TYPE, DATASET_DIRS
@@ -85,10 +85,11 @@ Examples:
         choices=[
             'pole_detection',
             'ruler_detection',
+            'midspan_wire_strip_detection',
             'ruler_marking_detection',
             'pole_top_detection',
             'equipment_detection',
-            'attachment_detection',
+            'unified_pole_detection',
             *KEYPOINT_MODEL_TO_TYPE.keys(),
         ],
         help='Model to train'
@@ -185,6 +186,17 @@ Examples:
                 'device': args.device if args.device != 'auto' else None,
             }
         },
+        'midspan_wire_strip_detection': {
+            'trainer': train_midspan_wire_strip_detector,
+            'kwargs': {
+                'train_dir': str(DATASET_DIRS['midspan_wire_strip_detection']),
+                'epochs': args.epochs,
+                'batch_size': args.batch_size,
+                'learning_rate': args.lr,
+                'resume': args.resume,
+                'device': args.device if args.device != 'auto' else None,
+            }
+        },
         'equipment_detection': {
             'trainer': train_equipment_detector,
             'kwargs': {
@@ -197,10 +209,10 @@ Examples:
                 'device': args.device if args.device != 'auto' else None,
             }
         },
-        'attachment_detection': {
-            'trainer': train_attachment_detector,
+        'unified_pole_detection': {
+            'trainer': train_unified_pole_detection,
             'kwargs': {
-                'train_dir': str(DATASET_DIRS['attachment_detection']),
+                'train_dir': str(DATASET_DIRS['unified_pole_detection']),
                 'epochs': args.epochs,
                 'batch_size': args.batch_size,
                 'lr0': args.lr,
@@ -234,12 +246,12 @@ Examples:
             }
         },
 
-        # Keypoint detection (equipment + attachment)
+        # Keypoint detection (equipment)
         **{
             model: {
-                'trainer': train_equipment_keypoint_detector if kp_type in ('riser', 'transformer', 'street_light', 'secondary_drip_loop') else train_attachment_keypoint_detector,
+                'trainer': train_equipment_keypoint_detector,
                 'kwargs': {
-                    ('equipment_type' if kp_type in ('riser', 'transformer', 'street_light', 'secondary_drip_loop') else 'attachment_type'): kp_type,
+                    'equipment_type': kp_type,
                     'train_dir': str(DATASET_DIRS[model]),
                     'epochs': args.epochs,
                     'batch_size': args.batch_size,
@@ -266,8 +278,9 @@ Examples:
         return
 
     if args.clear_cache and args.model in (
-        'pole_detection', 'ruler_detection', 'ruler_marking_detection',
-        'pole_top_detection', 'equipment_detection', 'attachment_detection',
+        'pole_detection', 'ruler_detection',
+        'ruler_marking_detection', 'pole_top_detection', 'equipment_detection',
+        'unified_pole_detection',
     ):
         clear_yolo_disk_cache_from_other_datasets(args.model)
 

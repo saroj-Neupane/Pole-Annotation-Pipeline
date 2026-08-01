@@ -321,10 +321,17 @@ def calculate_attachment_bounding_box(
     img_h: int,
     height_feet: Optional[float] = None,
     width_feet: Optional[float] = None,
+    y_offset_feet: float = 0.0,
 ) -> Optional[Dict]:
     """Attachment bbox centered on keypoint.
 
     Default: comm (2ft H x 4ft W). For down_guy, pass height_feet=4, width_feet=2.
+
+    ``y_offset_feet`` shifts the box center DOWN from the keypoint by that many feet
+    (positive = down). The keypoint itself is stored separately by the caller and stays
+    at ``coords`` — only the box moves. Use this for one-sided objects whose body extends
+    away from the attachment (e.g. a down_guy descends from its pole attachment, so a
+    downward-offset box hugs the guy instead of wasting half its height above the pole).
     """
     if not coords or not ppi or ppi <= 0:
         return None
@@ -335,9 +342,10 @@ def calculate_attachment_bounding_box(
     width_px = w_ft * 12.0 * ppi
     half_w_pct = (width_px / 2.0 / img_w) * 100.0
     half_h_pct = (height_px / 2.0 / img_h) * 100.0
+    offset_pct = (y_offset_feet * 12.0 * ppi / img_h) * 100.0
 
     cx = coords['percentX']
-    cy = coords['percentY']
+    cy = coords['percentY'] + offset_pct  # box center (keypoint stays at coords)
 
     return {
         'left': max(0.0, cx - half_w_pct),

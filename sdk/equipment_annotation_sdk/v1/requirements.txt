@@ -1,0 +1,6 @@
+# Equipment annotation package — runtime dependencies (Python 3.12, CPU-only).
+# No torch, no ultralytics. Total install size ≈ 60 MB on Windows.
+numpy>=1.26,<3
+onnxruntime>=1.18,<2
+opencv-python-headless>=4.9,<5
+Pillow>=10,<12

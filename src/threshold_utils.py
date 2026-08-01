@@ -1,6 +1,6 @@
 """
 Shared threshold sweep and config update logic for YOLO detection models.
-Used by scripts/threshold_sweep.py and evaluation_attachment_equipment.
+Used by scripts/eval/threshold_sweep.py and evaluation_attachment_equipment.
 """
 
 from __future__ import annotations

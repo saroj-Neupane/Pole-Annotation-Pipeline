@@ -1,418 +1,174 @@
-# Pole Calibration & Annotation Pipeline
+# Pole Annotation Pipeline
 
-A multi-stage computer vision system for automated calibration and annotation of electric utility pole infrastructure from field photographs. The pipeline combines YOLOv11 region detection with HRNet-W32 keypoint localization across 16 specialized models to estimate pole height, localize equipment reference points, and detect wire attachment points.
+Computer-vision pipelines that turn utility-pole field photos into structured
+annotation data: **height calibration**, **equipment annotation**, and
+**wire tracing** across a span. Training runs on PyTorch; inference ships as
+three pure-`numpy` + ONNX Runtime SDKs (no torch, no scipy) suitable for
+CPU-only desktop deployment.
 
-**[Live Demo](https://pole-annotation-app-gyq2qukkaq-uc.a.run.app/)** — External deployment; app source is not included in this repository
+> **Weights and data are proprietary** and are not part of this repository.
+> The training corpus (~24k labeled field photos across four US regions) and
+> the trained checkpoints belong to the client engagement that produced them.
+> Everything needed to train on your own data — dataset preparation, trainers,
+> evaluation harnesses, and the full inference/SDK source — is here.
+>
+> **[Live demo →](https://pole-annotation-app-98267233596.us-central1.run.app/demo)**
+> (weights load server-side; upload your own photos or use the bundled
+> anonymized samples — first request after idle takes ~30 s to warm up)
 
-**[Website Demo Video](assets/Website_Demo.webm)** — Short walkthrough of the deployed interface
+![Span trace sample](assets/span_trace_sample.jpg)
 
-## Demo
+## The three stacks
 
-<p align="center">
-  <a href="assets/Website_Demo.webm">
-    <img src="assets/Website_Demo.gif" width="900" alt="Animated demo of the deployed website"/>
-  </a>
-</p>
-<p align="center">
-  <em>Preview of the deployed interface. Click the GIF to open the full-quality WebM video.</em>
-</p>
+### 1. Calibration — pixel → feet
+Detects the pole, the survey height ruler, its tick keypoints (2.5–16.5 ft),
+and the pole top. A 1-D projective fit through the tick anchors gives a
+per-photo pixel→height model (validated to ~0.5 in against survey software
+output), so every downstream detection can be reported in feet and inches.
 
-## Sample Results
+Models: 4 × YOLO11 (pole, pole top, ruler, ruler markings — the markings model
+is YOLO-pose with tick keypoints).
 
-<p align="center">
-  <img src="assets/Pole_Calibration.jpg" width="270" alt="Calibration: ruler markings + pole top detection"/>
-  <img src="assets/Pole_Annotation.jpg" width="270" alt="Annotation: equipment + attachment detection"/>
-  <img src="assets/Midspan_Calibration.jpg" width="270" alt="Midspan ruler calibration"/>
-</p>
-<p align="center">
-  <em>Left: Calibration pipeline with ruler-marking keypoints (2.5-16.5 ft) and pole-top localization. Center: Annotation pipeline with equipment and wire-attachment localization. Right: Midspan calibration.</em>
-</p>
+### 2. Equipment annotation
+Shared pole detection → upper-70 % 2:5 crop → YOLO equipment detection
+(transformer, riser, street light, secondary drip loop) → per-class HRNet
+keypoint heads for attachment-point localization, reported as calibrated
+heights.
 
-## Inference Pipeline
+### 3. Wire tracing — which attachment connects to which wire
+Reconstructs span structure from a pole-A / midspan / pole-B photo triplet:
 
-Runtime inference flow on pole/midspan photos.
+- **Unified pole model** — one YOLO11-pose model over 17 joint classes
+  (hardware × cable-tier × crossarm-count: pin/post/davit/deadend/arm2-4+/
+  primary/secondary/neutral/catv/telco/fiber/guy/down-guy/…), giving per-pole
+  attachment inventory and tracer nodes in a single pass.
+- **Ruler-line midspan strip detector** — a 1-D heatmap CNN over a 1740×96
+  rectified strip along the calibration ruler line finds wire crossings;
+  a resnet18 tier classifier (bare / multiplex / comm, with a "none" veto)
+  classifies each crossing from a PPI-normalized patch.
+- **Learned edge-cost matcher** — bipartite assignment (pure-numpy Hungarian)
+  with a frozen 21-feature MLP edge cost, A↔B coupling (match-both-or-neither),
+  a non-crossing monotonic constraint (span wires don't cross), and
+  tier-agreement bonuses. Crossarm bundles are matched at bundle level.
 
-```mermaid
-flowchart TD
-    A[Pole Photo]
-    B[Midspan Photo]
-    C[Pole Detection<br/>YOLOv11s<br/>full image]
+## Honest evaluation methodology
 
-    subgraph PATHS[ ]
-        direction LR
+All quoted metrics come from a **site-disjoint split**: photos are grouped
+into geographic sites (10 m radius) and every site lives entirely in train,
+val, OR test — because utilities re-photograph the same poles across job
+revisions, a naive photo-level split leaks and inflates scores by 5–10 pp.
+Checkpoint selection uses the deployed operating point (F1 at the production
+confidence gates), never val-loss.
 
-        subgraph ANN[Annotation Path]
-            direction TB
-            K[Shared Upper 70% Pole Crop<br/>2:5 aspect ratio]
-            L[Equipment Detection<br/>YOLOv11s<br/>4 classes]
-            M[Attachment Detection<br/>YOLOv11s<br/>6 classes]
-            N[Per-equipment Keypoints<br/>HRNet-W32]
-            O[Per-attachment Keypoints<br/>HRNet-W32]
-            P[Annotation Outputs]
-            K --> L
-            K --> M
-            L --> N
-            M --> O
-            N --> P
-            O --> P
-        end
+| Metric (held-out, site-disjoint) | Score |
+|---|---|
+| Per-pole annotation micro-F1 (17 joint classes) | **0.717** |
+| Crossarm-count accuracy | **0.816** |
+| End-to-end span-trace chain accuracy* | **0.56** |
+| Equipment detection F1 | **0.84** |
+| Equipment keypoint PCK@2 in | 0.43–0.62 per class |
+| Calibration height projection vs survey SW | ~0.5 in |
 
-        subgraph CAL[Calibration Path]
-            direction TB
-            D[Ruler Detection<br/>YOLOv11s<br/>full image]
-            E[Ruler Crop]
-            F[Ruler Marking Keypoints<br/>HRNet-W32<br/>5 keypoints]
-            G[Pole Crop]
-            H[Pole Top Keypoint<br/>HRNet-W32<br/>upper 10% of pole crop]
-            J[Calibration Outputs<br/>downstream height estimation]
-            D --> E
-            E --> F
-            F --> J
-            G --> H
-            H --> J
-        end
-    end
+\* Chain accuracy = a midspan wire is traced to the correct attachment on
+*both* poles; scored against annotation ground truth that is itself ~90 %
+complete, so this is a floor. The tracer is deployed as an assisted-review
+first pass, not an auto-annotator.
 
-    A --> C
-    A --> D
-    B --> D
-    C --> K
-    C --> G
-    style PATHS fill:transparent,stroke:transparent
-```
-
-## Training Pipeline
-
-Model development flow from data preparation to saved checkpoints.
-
-```mermaid
-flowchart TD
-    A[Raw Data<br/>Pole + Midspan Photos/Labels]
-    B[Prepare Datasets<br/>scripts/prepare_dataset.py]
-    C[Split Manifest<br/>create or update split_manifest.json]
-
-    A --> B
-    B --> C
-
-    subgraph DSETS[Dataset Build]
-        direction LR
-        D1[Calibration Datasets<br/>pole_detection, ruler_detection,<br/>ruler_marking_detection, pole_top_detection]
-        D2[Detection Datasets<br/>equipment_detection, attachment_detection]
-        D3[Keypoint Datasets<br/>10 class-specific keypoint datasets]
-    end
-
-    C --> D1
-    C --> D2
-    C --> D3
-
-    E[Training Entry]
-    D1 --> E
-    D2 --> E
-    D3 --> E
-
-    E --> F1[Single Model Training<br/>train.py --model model_name]
-    E --> F2[Batch Training<br/>scripts/train_all_overnight.py]
-
-    F1 --> G1{Model Family}
-    G1 --> H1[YOLO Trainers<br/>detection models]
-    G1 --> H2[HRNet Trainers<br/>keypoint models]
-
-    F2 --> I1[Sequential Run<br/>skip trained unless --force]
-    I1 --> F1
-
-    H1 --> J[Save Best Weights<br/>runs/model_name/weights/best.pt]
-    H2 --> K[Save Best Weights<br/>runs/model_name/weights/best.pth]
-```
-
-### Key Design Decisions
-
-- **Hierarchical crop strategy**: Upper 70% of pole in 2:5 aspect ratio — balances field-of-view with resolution for equipment/attachment detection
-- **Per-class threshold optimization**: F1-maximizing confidence thresholds via automated sweep (not a single global threshold)
-- **Task-specific augmentation**: Minimal augmentation for scale-sensitive calibration models; aggressive augmentation (mosaic, mixup, copy-paste) for sparse equipment classes
-- **Keypoint interpolation**: Linear regression on confident ruler markings with index-based fallback for low-confidence or occluded points
-
-## Results
-
-The metrics below are reported results from prior training/evaluation runs. The
-repository currently does **not** include datasets, trained weights, or saved
-evaluation outputs, so these numbers are documentation rather than artifacts
-that can be verified from the checked-in files alone.
-
-### Calibration Pipeline
-
-| Component | Metric | Value |
-|-----------|--------|-------|
-| Pole Detection | mAP@0.5 | 0.908 |
-| Pole Detection | Detection Rate | 99.2% |
-| Ruler Detection | mAP@0.5 | 0.908 |
-| Ruler Detection | Detection Rate | 99.8% |
-| Ruler Markings (5 keypoints) | Mean Error | **0.335 inches** |
-| Ruler Markings | PCK@1 inch | 98.4% |
-| Pole Top | Mean Error | **1.49 inches** |
-| Pole Top | PCK@3 inches | 95.0% |
-
-### Equipment Detection
-
-| Class | F1 Score | Confidence Threshold |
-|-------|----------|---------------------|
-| Transformer | 0.965 | 0.361 |
-| Street Light | 0.950 | 0.101 |
-| Riser | 0.757 | 0.288 |
-| Secondary Drip Loop | 0.718 | 0.300 |
-| **Overall mAP@0.5** | **0.865** | |
-
-### Attachment Detection
-
-| Class | F1 Score | Confidence Threshold |
-|-------|----------|---------------------|
-| Comm | 0.882 | 0.213 |
-| Neutral | 0.834 | 0.281 |
-| Primary | 0.778 | 0.192 |
-| Secondary | 0.642 | 0.131 |
-| Down Guy | 0.628 | 0.141 |
-| Guy | 0.493 | 0.211 |
-| **Overall mAP@0.5** | **0.744** | |
-
-> **Note**: Wire classes (guy, down guy) remain challenging due to thin visual profiles, high occlusion, and limited training data. Cable classes (comm, primary, neutral) perform significantly better.
-
-## Models
-
-| Model | Architecture | Task |
-|-------|-------------|------|
-| `pole_detection` | YOLOv11s | Bounding box detection of utility poles |
-| `ruler_detection` | YOLOv11s | Bounding box detection of ruler scale bars |
-| `ruler_marking_detection` | HRNet-W32 | 5 keypoints on ruler markings (2.5, 6.5, 10.5, 14.5, 16.5 ft) |
-| `pole_top_detection` | HRNet-W32 | Single keypoint at pole top |
-| `equipment_detection` | YOLOv11s | 4-class detection (riser, transformer, street light, secondary drip loop) |
-| `riser_keypoint_detection` | HRNet-W32 | 1 keypoint (top) |
-| `transformer_keypoint_detection` | HRNet-W32 | 2 keypoints (top bolt, bottom) |
-| `street_light_keypoint_detection` | HRNet-W32 | 3 keypoints (upper bracket, lower bracket, drip loop) |
-| `secondary_drip_loop_keypoint_detection` | HRNet-W32 | 1 keypoint (lowest point) |
-| `attachment_detection` | YOLOv11s | 6-class detection (comm, down guy, primary, secondary, neutral, guy) |
-| `comm_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-| `down_guy_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-| `primary_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-| `secondary_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-| `neutral_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-| `guy_keypoint_detection` | HRNet-W32 | 1 keypoint (center) |
-
-## Project Structure
+## Repository layout
 
 ```
-├── src/
-│   ├── config.py                 # Single source of truth: paths, models, thresholds
-│   ├── models.py                 # HRNet-W32 keypoint architecture
-│   ├── training_utils.py         # Training loops for YOLO and keypoint models
-│   ├── inference.py              # High-level inference API
-│   ├── inference_utils.py        # Low-level detection and keypoint inference
-│   ├── inference_pipelines.py    # Pre-configured pipelines (calibration, equipment, attachment, annotation)
-│   ├── datasets.py               # PyTorch dataset classes with augmentation
-│   ├── evaluation_utils.py       # mAP, PCK, IoU calculation
-│   ├── evaluation_charts.py      # Metric visualization
-│   ├── threshold_utils.py        # F1-maximizing threshold sweep
-│   ├── visualization.py          # Bounding box and keypoint drawing
-│   ├── losses.py                 # Focal heatmap loss
-│   └── ...
-├── scripts/
-│   ├── prepare_dataset.py        # Prepare calibration, detection, and keypoint datasets
-│   ├── evaluate_models.py        # Run calibration, detection-only, and E2E evaluation
-│   ├── threshold_sweep.py        # F1-maximize per-class thresholds
-│   ├── train_all_overnight.py    # Automated multi-model training
-│   └── ...
-├── notebooks/
-│   ├── calibration/              # Data exploration, training, evaluation, inference
-│   ├── equipment/                # Same structure
-│   ├── attachment/               # Same structure
-│   └── E2E_Production.ipynb      # Full pipeline demo
-├── train.py                      # Unified training entry point
-└── requirements.txt
+src/                    training-time pipelines, matcher, eval logic (torch)
+train.py                single entry point for all model trainings
+scripts/data/           dataset preparation (site-disjoint split, label store)
+scripts/train/          trainers + variant/experiment launchers
+scripts/eval/           evaluation harnesses (per-model + end-to-end)
+scripts/tracer/         run the full wire tracer over span groups
+sdk/                    pure-numpy ONNX inference SDKs (no torch/scipy)
+  calibration_sdk/        pole + ruler + ticks + pole top
+  equipment_annotation_sdk/  equipment YOLO + HRNet keypoints
+  wire_tracer_sdk/        unified pole + strip + tier + learned matcher
+deploy/                 FastAPI demo webapp (the HF Space)
 ```
 
-## Setup
+## Quickstart
 
-Prerequisites: Python 3.10+ (CUDA-capable GPU recommended for training speed).
+### Inference SDKs (ONNX, CPU-only)
 
-```bash
-pip install -r requirements.txt
 ```
-
-`requirements.txt` covers the core runtime stack for training/inference, but
-several scripts and notebooks import additional packages that are not currently
-pinned there, including:
-
-```bash
-pip install matplotlib pandas scikit-learn tqdm pyyaml
+pip install numpy onnxruntime opencv-python-headless Pillow
 ```
-
-Download pretrained HRNet weights:
-```bash
-python scripts/download_hrnet_pretrained.py
-```
-
-## Quick Start
-
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-pip install matplotlib pandas scikit-learn tqdm pyyaml
-
-# 2. Download HRNet backbone weights
-python scripts/download_hrnet_pretrained.py
-
-# 3. Prepare datasets from local data/
-python scripts/prepare_dataset.py
-
-# 4. Train or evaluate
-python train.py --model pole_detection
-python scripts/evaluate_models.py --calibration
-```
-
-## Repository State
-
-This repository contains the pipeline code, notebooks, and helper scripts, but
-large artifacts are intentionally not versioned:
-
-- `data/` is a placeholder in git; raw pole/midspan photos and labels are not included
-- `models/` is a placeholder in git; pretrained/downloaded weights are not included
-- `datasets/`, `runs/`, and `results/` are generated locally and are not present in a fresh clone
-
-Most training, dataset-preparation, and evaluation commands in this README
-assume you already have the source data available locally under `data/`.
-
-Dataset preparation uses `datasets/split_manifest.json` as the split source of
-truth. By default, `scripts/prepare_dataset.py` preserves existing validation
-and test splits and only adds newly discovered samples to train. Use
-`--force-manifest` to rebuild splits from scratch, or `--create-manifest-only`
-to generate the manifest without writing datasets.
-
-## Training
-
-```bash
-# Train any model by name
-python train.py --model pole_detection
-python train.py --model ruler_marking_detection --epochs 150 --batch-size 64
-python train.py --model equipment_detection --warm-start --epochs 50
-
-# Train all models sequentially
-python scripts/train_all_overnight.py
-```
-
-Prepared datasets are expected under `datasets/<model_name>/` with YOLO format
-(for detection) or the repository's custom keypoint format (for HRNet models).
-Use `scripts/prepare_dataset.py` to build them from local raw labels once the
-source data exists under `data/`.
-
-Weights are saved to `runs/<model_name>/weights/best.pt` (YOLO) or `best.pth` (HRNet).
-
-## Inference
 
 ```python
-from pathlib import Path
-from src.inference import load_all_models, run_end_to_end_inference_simple
+from calibration import CalibrationPipeline           # sdk/calibration_sdk/v*/
+from equipment_annotation import EquipmentAnnotationPipeline
+from wire_tracer import WireTracerPipeline
 
-models = load_all_models()
-results = run_end_to_end_inference_simple(
-    Path("path/to/image.jpg"), models, use_tta=True, show_visualization=True
-)
+calib = CalibrationPipeline()
+result = calib.run(rgb_image)          # pole bbox, ruler ticks, pole top
+
+tracer = WireTracerPipeline()
+trace = tracer.run(pole_a_rgb, [midspan_rgb], pole_b_rgb)
 ```
 
-For production-style annotation on pole photos, the repository also provides a
-shared-crop annotation pipeline that runs equipment and attachment detection in
-one pole pass:
+Each SDK expects its `weights/` directory next to the package (see each SDK's
+`README.md` / `INTEGRATION.md`). Weights are exported from trained checkpoints
+with the SDK's `tools/export_onnx.py`; parity against the torch pipeline is
+checked by `tools/parity_check.py` (detection tolerance ~1e-4, matcher
+byte-exact).
 
-```python
-from pathlib import Path
-from src.inference import (
-    get_device,
-    load_pole_detector,
-    load_equipment_detector,
-    load_attachment_detector,
-    load_keypoint_detector,
-    load_attachment_keypoint_detector,
-)
-from src.inference_pipelines import annotation_pipeline
+Notable engineering: the wire-tracer SDK reimplements
+`scipy.optimize.linear_sum_assignment` and `scipy.signal.find_peaks` in pure
+numpy (`numpy_ops.py`, verified 200/200 random cases each against scipy) so
+the destination machine needs no scipy/torch.
 
-device = get_device()
-pole_detector = load_pole_detector(device)
-equip_detector = load_equipment_detector(device)
-attach_detector = load_attachment_detector(device)
+### Training on your own data
 
-equip_kp_models = {
-    name: load_keypoint_detector(name, device)
-    for name in ["riser", "transformer", "street_light", "secondary_drip_loop"]
-}
-attach_kp_models = {
-    name: load_attachment_keypoint_detector(name, device)
-    for name in ["comm", "down_guy", "primary", "secondary", "neutral", "guy"]
-}
+1. Build the label store and site-disjoint split
+   (`scripts/data/build_honest_split.py`) — see
+   [`docs/DATA_FORMAT.md`](docs/DATA_FORMAT.md) for the expected label schema.
+2. `python scripts/data/prepare_dataset.py --production` builds every stack's
+   dataset from the split manifest.
+3. `python train.py --model unified_pole_detection` (or
+   `midspan_wire_strip_detection`, `equipment_detection`, calibration models,
+   …).
+4. Evaluate: `scripts/eval/eval_unified_pole.py`,
+   `eval_midspan_strip_f1.py`, `eval_wire_tracing_e2e.py`.
+5. Export ONNX: `python sdk/<sdk>/v*/tools/export_onnx.py`, then
+   `tools/parity_check.py`.
 
-equip_preds, attach_preds, ppi = annotation_pipeline.run_single(
-    Path("path/to/pole_photo.jpg"),
-    pole_detector,
-    equip_detector,
-    attach_detector,
-    equip_kp_models,
-    attach_kp_models,
-    device,
-)
+### Demo webapp
+
+```
+pip install -r requirements-deploy.txt
+python -m uvicorn deploy.main:app --port 8000
+# open http://localhost:8000/demo
 ```
 
-## Evaluation
+Per-photo annotation views (calibration / equipment / attachments) and a
+span-trace view (pole A | midspans | pole B with traced wires), with
+ground-truth overlay left of the ruler line when a local label store exists.
 
-```bash
-# Evaluate calibration pipeline
-python scripts/evaluate_models.py --calibration
+## Sample outputs
 
-# Evaluate equipment detection + end-to-end/keypoint metrics
-python scripts/evaluate_models.py --equipment
+| | |
+|---|---|
+| ![Calibration](assets/calibration_sample.jpg) | ![Equipment](assets/equipment_sample.jpg) |
+| Ruler ticks + pole top + height model | Equipment + keypoints at calibrated heights |
 
-# Evaluate attachment detection + end-to-end/keypoint metrics
-python scripts/evaluate_models.py --attachment
+## Lessons that shaped the design
 
-# Run everything (calibration + combined equipment/attachment pass)
-python scripts/evaluate_models.py --all
-
-# Run threshold sweep to optimize per-class confidence
-python scripts/threshold_sweep.py --update-config
-```
-
-`scripts/evaluate_models.py` also supports `--plots`, `--plots-only`,
-`--results-dir`, and `--device`. When both `--equipment` and `--attachment`
-are requested, it uses a combined evaluation path so pole detection is only run
-once per image.
-
-## Production Models
-
-Inference defaults to development weights under `runs/<model>/weights/`. If
-`USE_PRODUCTION_MODELS=true` is set in the environment, model loading switches
-to `models/production/<model>/production/model.pt` or `.pth`.
-
-To promote trained checkpoints into the production registry:
-
-```bash
-python scripts/promote_model.py --model pole_detection --version 1.0.0
-python scripts/promote_model.py --all
-python scripts/promote_model.py --bump
-```
-
-## Notebooks
-
-Each pipeline has 4 notebooks for the full ML workflow:
-
-| Notebook | Purpose |
-|----------|---------|
-| `001_Data_Exploration.ipynb` | Dataset statistics, class distribution, sample visualization |
-| `002_Model_Training.ipynb` | Training with hyperparameter exploration |
-| `003_Evaluation.ipynb` | Metrics computation, error analysis, threshold tuning |
-| `004_Inference.ipynb` | End-to-end inference with visualization |
-
-## Tech Stack
-
-- **Detection**: [Ultralytics YOLOv11](https://github.com/ultralytics/ultralytics) (small variant)
-- **Keypoints**: Custom [HRNet-W32](https://arxiv.org/abs/1902.09212) with Gaussian heatmap regression
-- **Training**: PyTorch, TensorBoard
-- **Evaluation**: Custom mAP, PCK, IoU implementations
+- **Site-disjoint or it didn't happen.** Photo-level random splits leaked
+  5–10 pp on every model; all metrics here are from site-disjoint splits.
+- **Select checkpoints at the deployed operating point.** Val-loss checkpoint
+  selection cost 2.1 pp end-to-end on the strip detector; the trainer now
+  tracks F1 at the production peak-extraction op-point.
+- **Stage independence.** Later stages never invent detections to satisfy
+  earlier-stage expectations (e.g. crossarm wire multiplicity is a matcher
+  outcome, not a detector inflation).
+- **The matcher is information-bound.** Same-tier wires at similar heights
+  carry no distinguishing signal in single photos; the residual error budget
+  points at capture-time changes, not model capacity.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT (code). Model weights and training data are not distributed.

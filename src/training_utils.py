@@ -24,15 +24,19 @@ except ImportError:
 
 from .config import (
     IMAGENET_MEAN, IMAGENET_STD,
-    POLE_DETECTION_CONFIG, RULER_DETECTION_CONFIG, EQUIPMENT_DETECTION_CONFIG,
-    ATTACHMENT_DETECTION_CONFIG, ATTACHMENT_AUGMENT_PARAMS,
+    POLE_DETECTION_CONFIG, RULER_DETECTION_CONFIG,
+    MIDSPAN_WIRE_STRIP_DETECTION_CONFIG,
+    EQUIPMENT_DETECTION_CONFIG,
     YOLO_MODEL_PATHS, YOLO_MODELS_DIR, PROJECT_ROOT, RUNS_DIR,
-    RULER_AUGMENT_PARAMS, POLE_AUGMENT_PARAMS, EQUIPMENT_AUGMENT_PARAMS,
+    RULER_AUGMENT_PARAMS, POLE_AUGMENT_PARAMS,
+    EQUIPMENT_AUGMENT_PARAMS,
     POLE_TOP_AUGMENT_PARAMS, AUGMENT_PARAMS,
     DATASETS_DIR, DATASET_DIRS, POLE_DETECTION, RULER_DETECTION,
     EQUIPMENT_DETECTION, EQUIPMENT_CLASS_NAMES,
-    ATTACHMENT_CLASS_NAMES, EQUIPMENT_KEYPOINT_CONFIGS, ATTACHMENT_KEYPOINT_CONFIGS,
+    EQUIPMENT_KEYPOINT_CONFIGS,
     RULER_MARKING_DETECTION_CONFIG, POLE_TOP_DETECTION_CONFIG,
+    UNIFIED_POLE_DETECTION_CONFIG, UNIFIED_POLE_DETECTION_AUGMENT_PARAMS,
+    UNIFIED_POLE_DETECTION_CLASS_NAMES, UNIFIED_POLE_DETECTION,
 )
 
 
@@ -284,19 +288,19 @@ def _validate_yolo_dataset(train_dir: str) -> None:
     if not p.exists():
         raise FileNotFoundError(
             f"Dataset directory not found: {train_dir}\n"
-            "Run: python scripts/prepare_dataset.py [--equipment] etc."
+            "Run: python scripts/data/prepare_dataset.py [--equipment] etc."
         )
     train_imgs = p / 'images' / 'train'
     if not train_imgs.exists():
         raise FileNotFoundError(
             f"Training images not found: {train_imgs}\n"
-            "Ensure dataset has images/train/ structure. Run: python scripts/prepare_dataset.py"
+            "Ensure dataset has images/train/ structure. Run: python scripts/data/prepare_dataset.py"
         )
     n = len(list(train_imgs.glob('*.jpg')) + list(train_imgs.glob('*.png')))
     if n == 0:
         raise FileNotFoundError(
             f"No images in {train_imgs}\n"
-            "Prepare the dataset first: python scripts/prepare_dataset.py"
+            "Prepare the dataset first: python scripts/data/prepare_dataset.py"
         )
 
 
@@ -304,12 +308,7 @@ def prepare_data_yaml(train_dir: str, names: List[str]) -> Path:
     """
     Prepare YOLO data.yaml file.
     
-    Args:
-        train_dir: Directory containing training data
-        names: List of class names
-        
-    Returns:
-        Path to created data.yaml file
+    Preserves pose fields (kpt_shape, flip_idx) from an existing dataset data.yaml.
     """
     data_yaml_path = Path(train_dir) / 'data.yaml'
     abs_train_dir = Path(train_dir).resolve()
@@ -320,6 +319,17 @@ def prepare_data_yaml(train_dir: str, names: List[str]) -> Path:
         'nc': len(names),
         'names': names,
     }
+    if (abs_train_dir / 'images' / 'test').is_dir():
+        data_yaml['test'] = 'images/test'   # so eval split='test' works (was missing -> e2e crash)
+    if data_yaml_path.exists():
+        try:
+            with data_yaml_path.open() as f:
+                existing = yaml.safe_load(f) or {}
+            for key in ('kpt_shape', 'flip_idx'):
+                if key in existing:
+                    data_yaml[key] = existing[key]
+        except Exception:
+            pass
     with data_yaml_path.open('w') as f:
         yaml.dump(data_yaml, f, default_flow_style=None, sort_keys=False)
     return data_yaml_path
@@ -340,6 +350,19 @@ def _log_yolo_row_to_tensorboard(row: dict, writer: SummaryWriter, lock: Optiona
         writer.add_scalar('metrics/recall', float(row['metrics/recall(B)']), epoch)
         writer.add_scalar('metrics/mAP50', float(row['metrics/mAP50(B)']), epoch)
         writer.add_scalar('metrics/mAP50-95', float(row['metrics/mAP50-95(B)']), epoch)
+        # Pose metrics (P) + pose/keypoint-objectness losses — only present for YOLO-pose models
+        # (unified_pole, wire/wire_hw pose, equipment_pose). Box-only detect models skip these.
+        if 'metrics/mAP50(P)' in row:
+            writer.add_scalar('metrics/precision_pose', float(row['metrics/precision(P)']), epoch)
+            writer.add_scalar('metrics/recall_pose', float(row['metrics/recall(P)']), epoch)
+            writer.add_scalar('metrics/mAP50_pose', float(row['metrics/mAP50(P)']), epoch)
+            writer.add_scalar('metrics/mAP50-95_pose', float(row['metrics/mAP50-95(P)']), epoch)
+        if 'train/pose_loss' in row:
+            writer.add_scalar('loss/train_pose', float(row['train/pose_loss']), epoch)
+            writer.add_scalar('loss/val_pose', float(row['val/pose_loss']), epoch)
+        if 'train/kobj_loss' in row:
+            writer.add_scalar('loss/train_kobj', float(row['train/kobj_loss']), epoch)
+            writer.add_scalar('loss/val_kobj', float(row['val/kobj_loss']), epoch)
         writer.add_scalar('learning_rate', float(row['lr/pg0']), epoch)
         writer.flush()
 
@@ -390,7 +413,7 @@ def _train_yolo_detector(stage: str, train_dir: str, names: List[str], imgsz: Tu
                          batch_size: Optional[int], extra_args: Optional[Dict],
                          augment_params: Optional[Dict] = None, model_size: str = 'nano',
                          resume: bool = False, warm_start: bool = False,
-                         device: Optional[str] = None):
+                         device: Optional[str] = None, pose: bool = False):
     """
     Shared training function for YOLO detectors.
     
@@ -438,7 +461,8 @@ def _train_yolo_detector(stage: str, train_dir: str, names: List[str], imgsz: Tu
     YOLO_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Get model name for download (YOLO will auto-download if it doesn't exist)
-    model_name = f'yolo11{model_size[0]}.pt'  # 'n' for nano, 's' for small, 'm' for medium
+    size_char = model_size[0]  # 'n' for nano, 's' for small, 'm' for medium
+    model_name = f'yolo11{size_char}-pose.pt' if pose else f'yolo11{size_char}.pt'
     base_model = str(base_model_path)
 
     if batch_size is None:
@@ -690,51 +714,55 @@ def train_equipment_detector(train_dir: Optional[str] = None,
     )
 
 
-def train_attachment_detector(train_dir: Optional[str] = None,
-                               names: Optional[List[str]] = None,
-                               epochs: Optional[int] = None,
-                               batch_size: Optional[int] = None,
-                               lr0: Optional[float] = None,
-                               extra_args: Optional[Dict] = None,
-                               resume: bool = False, warm_start: bool = False, device: Optional[str] = None):
-    """
-    Train YOLO model for attachment detection (comm, down_guy).
+def train_unified_pole_detection(
+    train_dir: Optional[str] = None,
+    names: Optional[List[str]] = None,
+    epochs: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    lr0: Optional[float] = None,
+    extra_args: Optional[Dict] = None,
+    resume: bool = False,
+    warm_start: bool = False,
+    device: Optional[str] = None,
+    stage: str = 'unified_pole_detection',
+):
+    """Train YOLO pose model for unified pole detection (1 keypoint, 17 joint classes).
 
-    Args:
-        train_dir: Directory containing training data (default: DATASETS_DIR/attachment_detection)
-        names: List of class names (default: ATTACHMENT_CLASS_NAMES)
-        epochs: Number of training epochs (default: from ATTACHMENT_DETECTION_CONFIG)
-        batch_size: Batch size for training (default: from ATTACHMENT_DETECTION_CONFIG)
-        lr0: Learning rate override (default: from config)
-        extra_args: Additional training arguments to override defaults
+    Same upper-70% 2:5 crop / 1ft x 2ft box / attachment keypoint pose pipeline as the
+    legacy wire_detection trainer, but with the unified joint-class space (hardware x cable_type
+    -> 17 classes; see UNIFIED_POLE_DETECTION_CLASS_NAMES). Defaults to
+    unified_pole_detection_dataset.
     """
     if train_dir is None:
-        train_dir = str(DATASETS_DIR / "attachment_detection")
+        train_dir = str(DATASET_DIRS[UNIFIED_POLE_DETECTION])
     if epochs is None:
-        epochs = ATTACHMENT_DETECTION_CONFIG['epochs']
+        epochs = UNIFIED_POLE_DETECTION_CONFIG['epochs']
     if batch_size is None:
-        batch_size = ATTACHMENT_DETECTION_CONFIG['batch_size']
+        batch_size = UNIFIED_POLE_DETECTION_CONFIG['batch_size']
 
     overrides = {'cos_lr': True}
     if lr0 is not None:
         overrides['lr0'] = lr0
     if extra_args:
         overrides.update(extra_args)
-    attachment_training_args = _yolo_training_args(ATTACHMENT_DETECTION_CONFIG, overrides)
+    unified_training_args = _yolo_training_args(UNIFIED_POLE_DETECTION_CONFIG, overrides)
 
     _train_yolo_detector(
-        stage='attachment_detection',
+        stage=stage,
         train_dir=train_dir,
-        names=names or list(ATTACHMENT_CLASS_NAMES),
-        imgsz=ATTACHMENT_DETECTION_CONFIG['imgsz'],
-        use_rect=ATTACHMENT_DETECTION_CONFIG['use_rect'],
-        default_batch_size=ATTACHMENT_DETECTION_CONFIG['batch_size'],
+        names=names or list(UNIFIED_POLE_DETECTION_CLASS_NAMES),
+        imgsz=UNIFIED_POLE_DETECTION_CONFIG['imgsz'],
+        use_rect=UNIFIED_POLE_DETECTION_CONFIG['use_rect'],
+        default_batch_size=UNIFIED_POLE_DETECTION_CONFIG['batch_size'],
         epochs=epochs,
         batch_size=batch_size,
-        extra_args=attachment_training_args,
-        augment_params=ATTACHMENT_AUGMENT_PARAMS,
-        model_size=ATTACHMENT_DETECTION_CONFIG['model_size'],
-        resume=resume, warm_start=warm_start, device=device,
+        extra_args=unified_training_args,
+        augment_params=UNIFIED_POLE_DETECTION_AUGMENT_PARAMS,
+        model_size=UNIFIED_POLE_DETECTION_CONFIG['model_size'],
+        resume=resume,
+        warm_start=warm_start,
+        device=device,
+        pose=True,
     )
 
 
@@ -812,10 +840,12 @@ def train_model(model, train_loader, val_loader, num_epochs=50, patience=10,
     weights_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = weights_dir / 'last.pth'
     best_model_path = weights_dir / 'best.pth'
-    
+    best_pck_path = weights_dir / 'best_pck.pth'   # selected on val PCK@2" (annotation product metric)
+
     start_epoch = 1
     best_val_loss = float('inf')
     best_val_acc = 0.0
+    best_val_pck = -1.0
     patience_counter = 0
     history = {
         'train_loss': [], 'val_loss': [], 
@@ -985,6 +1015,11 @@ def train_model(model, train_loader, val_loader, num_epochs=50, patience=10,
             patience_counter += 1
 
         best_val_acc = max(best_val_acc, kp_acc)
+        # PCK-best checkpoint: equipment keypoints / down_guy are ANNOTATION-only (no e2e effect),
+        # so the product metric is PCK, not val-loss. best.pth tracks loss; best_pck.pth tracks PCK@2".
+        if kp_acc_2inch > best_val_pck:
+            best_val_pck = kp_acc_2inch
+            torch.save(model.state_dict(), best_pck_path)
 
         torch.save({
             'epoch': epoch,
@@ -1041,6 +1076,511 @@ def train_model(model, train_loader, val_loader, num_epochs=50, patience=10,
             break
 
     writer.close()
+    return history, best_val_loss, best_val_acc
+
+
+def _heatmap_y_peaks(
+    hm_2d: np.ndarray,
+    min_distance: int,
+    threshold: float,
+) -> List[int]:
+    """Find peak y-indices from a 2D heatmap via row-wise max 1D profile."""
+    profile = hm_2d.max(axis=1)
+    peaks: List[int] = []
+    n = len(profile)
+    i = 0
+    while i < n:
+        end = min(i + min_distance, n)
+        segment = profile[i:end]
+        if segment.size == 0:
+            break
+        local_peak = int(segment.argmax()) + i
+        if profile[local_peak] >= threshold:
+            peaks.append(local_peak)
+            i = local_peak + min_distance
+        else:
+            i += min_distance
+    return peaks
+
+
+def _match_wire_peaks(gt_peaks: List[int], pred_peaks: List[int], max_dist: float) -> Tuple[int, int]:
+    """Greedy match pred peaks to GT; returns (matched_count, gt_count)."""
+    if not gt_peaks:
+        return 0, 0
+    used = set()
+    matched = 0
+    for g in gt_peaks:
+        best_j = None
+        best_d = max_dist + 1.0
+        for j, p in enumerate(pred_peaks):
+            if j in used:
+                continue
+            d = abs(g - p)
+            if d < best_d:
+                best_d = d
+                best_j = j
+        if best_j is not None and best_d <= max_dist:
+            matched += 1
+            used.add(best_j)
+    return matched, len(gt_peaks)
+
+
+def train_wire_strip_model(
+    model,
+    train_loader,
+    val_loader,
+    num_epochs=100,
+    patience=40,
+    use_focal_loss=False,
+    device=None,
+    checkpoint_dir=None,
+    learning_rate=1e-3,
+    peak_min_distance=20,
+    peak_threshold=0.25,
+    pos_weight=8.0,
+    deploy_height=0.40,
+    deploy_prom=0.02,
+    deploy_dist=12,
+    continue_lr=None,
+):
+    """
+    Train HRNet wire-strip model (single-channel multi-peak heatmap).
+
+    continue_lr: when resuming from last.pth, override the (possibly crushed) LR to this constant
+    value and DO NOT load/step the schedulers — holds a fixed LR so a still-climbing deploy/fbeta
+    can reach its true plateau (the val-loss ReduceLROnPlateau otherwise crushes LR to ~1e-6 while
+    fbeta still rises). Set patience >= continuation epochs to disable val-loss early-stop. best_fbeta.pth
+    captures the peak. None = legacy behaviour (load full optimizer/scheduler state, schedulers active).
+
+    Validation tracks two metrics: (1) legacy 1D peak-matching recall at 1/2/3 inch (precision-blind,
+    floods early — kept for back-compat), and (2) the DEPLOYED-extractor F1 (find_peaks at the deployed
+    op-point on the central-band-mean profile, matched to GT-heatmap peaks). `best.pth` is saved on min
+    val-loss (back-compat); `best_f1.pth` is saved on max deployed-F1 — the e2e-aligned selection metric
+    (val-loss demonstrably leaves precision on the table; see eval_midspan_strip_f1.py / strip_ckpt_e2e.py).
+    """
+    from scipy.signal import find_peaks
+    from .losses import FocalHeatmapLoss, UnimodalHeatmapLoss
+    from .config import WIRE_STRIP_HEATMAP_HEIGHT, WIRE_STRIP_HEATMAP_WIDTH, WIRE_STRIP_PROFILE_BAND
+
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = model.to(device)
+    if use_focal_loss:
+        criterion = FocalHeatmapLoss(alpha=2, beta=4)
+        print('Using FocalHeatmapLoss')
+    else:
+        criterion = UnimodalHeatmapLoss(pos_weight=pos_weight, vertical_focus_weight=0.1)
+        print(f'Using UnimodalHeatmapLoss (pos_weight={pos_weight})')
+
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1.5e-4, betas=(0.9, 0.999))
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[15, 30, 40], gamma=0.6)
+    plateau_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=6, min_lr=1e-6
+    )
+
+    if checkpoint_dir is None:
+        checkpoint_dir = RUNS_DIR / 'midspan_wire_strip_detection'
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    weights_dir = checkpoint_dir / 'weights'
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = weights_dir / 'last.pth'
+    best_model_path = weights_dir / 'best.pth'
+    best_f1_path = weights_dir / 'best_f1.pth'
+    best_fbeta_path = weights_dir / 'best_fbeta.pth'
+
+    start_epoch = 1
+    best_val_loss = float('inf')
+    best_val_acc = 0.0
+    best_f1 = -1.0
+    best_fbeta = -1.0
+    patience_counter = 0
+    history = {
+        'train_loss': [], 'val_loss': [],
+        'val_recall_3inch': [], 'val_recall_2inch': [], 'val_recall_1inch': [],
+    }
+
+    hold_lr = continue_lr is not None
+    if checkpoint_path.exists():
+        print(f'Resuming training from {checkpoint_path}')
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_acc = checkpoint.get('best_val_acc', 0.0)
+        old_history = checkpoint.get('history', {})
+        history = {
+            'train_loss': old_history.get('train_loss', []),
+            'val_loss': old_history.get('val_loss', []),
+            'val_recall_3inch': old_history.get('val_recall_3inch', []),
+            'val_recall_2inch': old_history.get('val_recall_2inch', []),
+            'val_recall_1inch': old_history.get('val_recall_1inch', []),
+        }
+        if hold_lr:
+            # continuation at a fixed re-warmed LR: fresh optimizer LR, schedulers NOT loaded/stepped,
+            # best_val_loss reset so the val-loss early-stop never trips during the plateau search.
+            for g in optimizer.param_groups:
+                g['lr'] = continue_lr
+            best_val_loss = float('inf')
+            patience_counter = 0
+            print(f'CONTINUE mode: held LR={continue_lr:.2e}, schedulers frozen, val-loss early-stop off')
+        else:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scheduler_state_dict' in checkpoint:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            patience_counter = checkpoint.get('patience_counter', 0)
+            if 'plateau_scheduler_best' in checkpoint:
+                plateau_scheduler.best = checkpoint['plateau_scheduler_best']
+                plateau_scheduler.num_bad_epochs = checkpoint.get('plateau_scheduler_num_bad_epochs', 0)
+        print(f'Resumed from epoch {start_epoch - 1}, best_val_loss={best_val_loss:.4f}')
+    else:
+        print('Starting wire strip training from scratch')
+
+    run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    tensorboard_dir = checkpoint_dir / 'tensorboard' / run_ts
+    tensorboard_dir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=str(tensorboard_dir))
+
+    hm_h = WIRE_STRIP_HEATMAP_HEIGHT
+    cen = WIRE_STRIP_HEATMAP_WIDTH // 2
+    band = WIRE_STRIP_PROFILE_BAND       # central-band half-width = deployed extractor
+
+    def _deploy_peaks(hm2d):
+        """find_peaks on the central-band-mean profile at the deployed op-point (matches inference)."""
+        prof = hm2d[:, max(cen - band, 0):cen + band].mean(axis=1)
+        return find_peaks(prof, height=deploy_height, distance=deploy_dist, prominence=deploy_prom)[0].tolist()
+
+    def _gt_peaks(hm2d):
+        """GT wire rows from the target heatmap (clean Gaussians) — the honest denominator."""
+        prof = hm2d[:, max(cen - band, 0):cen + band].mean(axis=1)
+        return find_peaks(prof, height=0.5, distance=deploy_dist, prominence=0.1)[0].tolist()
+
+    for epoch in range(start_epoch, num_epochs + 1):
+        model.train()
+        running_train = 0.0
+        for batch in train_loader:
+            images = batch[0].to(device)
+            targets = batch[1].to(device)
+            masks = batch[6].to(device) if len(batch) > 6 else None  # ignore-region (None=supervise all)
+            optimizer.zero_grad()
+            logits = model(images)
+            pred_heatmaps = torch.sigmoid(logits)
+            loss = criterion(pred_heatmaps, targets, mask=masks)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            running_train += loss.item()
+
+        mean_train = running_train / max(len(train_loader), 1)
+
+        model.eval()
+        running_val = 0.0
+        matched_3 = matched_2 = matched_1 = 0.0
+        gt_total = 0.0
+        dep_tp = dep_fp = dep_fn = 0.0      # deployed-extractor (find_peaks @ op-point) F1 @ 3in
+        with torch.no_grad():
+            for batch in val_loader:
+                images = batch[0].to(device)
+                targets = batch[1].to(device)
+                orig_dims = batch[4].to(device)
+                ppi_values = batch[5].to(device)
+                masks = batch[6].to(device) if len(batch) > 6 else None
+
+                logits = model(images)
+                pred_heatmaps = torch.sigmoid(logits)
+                loss = criterion(pred_heatmaps, targets, mask=masks)
+                running_val += loss.item()
+
+                pred_np = pred_heatmaps.cpu().numpy()
+                tgt_np = targets.cpu().numpy()
+                for batch_idx in range(pred_np.shape[0]):
+                    orig_h = orig_dims[batch_idx, 0].item()
+                    ppi = ppi_values[batch_idx, 0].item()
+                    if ppi <= 0 or orig_h <= 1:
+                        continue
+                    px_per_hm = (orig_h - 1) / max(hm_h - 1, 1)
+                    inch_to_px = lambda inches: inches * ppi / px_per_hm
+
+                    gt_peaks = _heatmap_y_peaks(
+                        tgt_np[batch_idx, 0], peak_min_distance, peak_threshold * 0.5
+                    )
+                    pred_peaks = _heatmap_y_peaks(
+                        pred_np[batch_idx, 0], peak_min_distance, peak_threshold
+                    )
+                    gt_total += len(gt_peaks)
+                    m3, _ = _match_wire_peaks(gt_peaks, pred_peaks, inch_to_px(3.0))
+                    m2, _ = _match_wire_peaks(gt_peaks, pred_peaks, inch_to_px(2.0))
+                    m1, _ = _match_wire_peaks(gt_peaks, pred_peaks, inch_to_px(1.0))
+                    matched_3 += m3
+                    matched_2 += m2
+                    matched_1 += m1
+
+                    # deployed-extractor F1: find_peaks @ op-point vs GT-heatmap peaks, 3in tol
+                    dgt = _gt_peaks(tgt_np[batch_idx, 0])
+                    dpr = _deploy_peaks(pred_np[batch_idx, 0])
+                    dtp, _ = _match_wire_peaks(dgt, dpr, inch_to_px(3.0))
+                    dep_tp += dtp
+                    dep_fp += len(dpr) - dtp
+                    dep_fn += len(dgt) - dtp
+
+        mean_val = running_val / max(len(val_loader), 1)
+        recall_3 = matched_3 / gt_total if gt_total else 0.0
+        recall_2 = matched_2 / gt_total if gt_total else 0.0
+        recall_1 = matched_1 / gt_total if gt_total else 0.0
+        dep_P = dep_tp / (dep_tp + dep_fp) if (dep_tp + dep_fp) else 0.0
+        dep_R = dep_tp / (dep_tp + dep_fn) if (dep_tp + dep_fn) else 0.0
+        dep_F1 = 2 * dep_P * dep_R / (dep_P + dep_R) if (dep_P + dep_R) else 0.0
+        # F0.5 weights precision 2x recall — the matcher penalizes a false midspan peak
+        # (cascade) more than a miss, so F-beta<1 tracks e2e better than plain F1.
+        _b2 = 0.25  # beta^2 for beta=0.5
+        dep_Fb = ((1 + _b2) * dep_P * dep_R / (_b2 * dep_P + dep_R)) if (_b2 * dep_P + dep_R) else 0.0
+
+        history['train_loss'].append(mean_train)
+        history['val_loss'].append(mean_val)
+        history['val_recall_3inch'].append(recall_3)
+        history['val_recall_2inch'].append(recall_2)
+        history['val_recall_1inch'].append(recall_1)
+
+        writer.add_scalar('loss/train', mean_train, epoch)
+        writer.add_scalar('loss/val', mean_val, epoch)
+        writer.add_scalar('recall/3inch', recall_3, epoch)
+        writer.add_scalar('recall/2inch', recall_2, epoch)
+        writer.add_scalar('recall/1inch', recall_1, epoch)
+        writer.add_scalar('deploy/precision', dep_P, epoch)
+        writer.add_scalar('deploy/recall', dep_R, epoch)
+        writer.add_scalar('deploy/f1', dep_F1, epoch)
+        writer.add_scalar('deploy/fbeta', dep_Fb, epoch)
+        writer.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], epoch)
+        writer.flush()
+
+        if not hold_lr:                       # continue mode holds a fixed re-warmed LR
+            scheduler.step()
+            plateau_scheduler.step(mean_val)
+        if mean_val < best_val_loss:
+            best_val_loss = mean_val
+            patience_counter = 0
+            torch.save(model.state_dict(), best_model_path)
+        else:
+            patience_counter += 1
+
+        if dep_F1 > best_f1:
+            best_f1 = dep_F1
+            torch.save(model.state_dict(), best_f1_path)
+
+        if dep_Fb > best_fbeta:
+            best_fbeta = dep_Fb
+            torch.save(model.state_dict(), best_fbeta_path)
+
+        best_val_acc = max(best_val_acc, recall_1)
+
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'plateau_scheduler_best': plateau_scheduler.best,
+            'plateau_scheduler_num_bad_epochs': plateau_scheduler.num_bad_epochs,
+            'best_val_loss': best_val_loss,
+            'best_val_acc': best_val_acc,
+            'patience_counter': patience_counter,
+            'history': history,
+            'batch_size': train_loader.batch_size,
+            'learning_rate': learning_rate,
+        }, checkpoint_path)
+
+        current_lr = optimizer.param_groups[0]['lr']
+        print(
+            f'Epoch {epoch:03d} | train {mean_train:.4f} | val {mean_val:.4f} | '
+            f'recall≤3" {recall_3 * 100:.1f}% | deploy P/R/F1/Fb {dep_P:.3f}/{dep_R:.3f}/{dep_F1:.3f}/{dep_Fb:.3f} '
+            f'(best_f1 {best_f1:.3f} fb {best_fbeta:.3f}) | best_loss {best_val_loss:.4f} | LR {current_lr:.2e}'
+        )
+
+        if patience_counter >= patience:
+            print(f'Early stopping triggered at epoch {epoch}')
+            break
+
+    writer.close()
+    return history, best_val_loss, best_val_acc
+
+
+def train_midspan_wire_strip_detector(
+    train_dir: Optional[str] = None,
+    epochs: Optional[int] = None,
+    patience: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    learning_rate: Optional[float] = None,
+    use_focal_loss: Optional[bool] = None,
+    augmentation_params: Optional[Dict] = None,
+    geometric_augmentations: Optional[Dict] = None,
+    resume: bool = False,
+    device: Optional[str] = None,
+    checkpoint_dir: Optional[str] = None,
+    flipud_p: float = 0.0,
+    pos_weight: float = 8.0,
+    sigma_y: Optional[float] = None,
+    tier_aware: bool = False,
+    ignore_half_rows: Optional[float] = None,
+    target_mode: str = 'blob',
+    continue_lr: Optional[float] = None,
+    resize_height: Optional[int] = None,
+    resize_width: Optional[int] = None,
+):
+    """Train HRNet on ruler column strips for multi-wire height heatmaps.
+
+    resize_height/resize_width: override the input/heatmap resolution (None = config
+        3480x96). The deployed-extractor eval's peak_min_distance is scaled by
+        resize_height/3480 so the F1 metric stays physically comparable; pass a
+        proportionally scaled sigma_y yourself (e.g. 1740 -> sigma_y 6.8).
+
+    checkpoint_dir: override output dir (default runs/midspan_wire_strip_detection); use a separate
+        dir for experiments so the deployed best.pth is not clobbered. flipud_p: vertical-flip aug
+        prob (valid for symmetric strips). pos_weight: UnimodalHeatmapLoss positive upweight (higher
+        = lean recall). sigma_y: target-Gaussian vertical std in heatmap rows (None = config default
+        WIRE_STRIP_GAUSSIAN_SIGMA_Y); SHARPER (smaller) sigma_y = tighter peaks = the localization
+        lever (the height-only matcher consumes y precision the strip-F1@tolerance is blind to).
+        Selection: best.pth=min val-loss, best_f1.pth=max deployed-F1, best_fbeta.pth=max F0.5 (FP-averse).
+    """
+    import torchvision.transforms as transforms
+    from torch.utils.data import DataLoader
+    from .models import KeypointDetector
+    from .datasets import WireStripDataset
+    from .config import (
+        WIRE_STRIP_RESIZE_HEIGHT,
+        WIRE_STRIP_RESIZE_WIDTH,
+        WIRE_STRIP_HEATMAP_HEIGHT,
+        WIRE_STRIP_HEATMAP_WIDTH,
+        WIRE_STRIP_PEAK_MIN_DISTANCE,
+        WIRE_STRIP_PEAK_THRESHOLD,
+        HRNET_WEIGHTS_PATH,
+    )
+
+    cfg = MIDSPAN_WIRE_STRIP_DETECTION_CONFIG
+    if train_dir is None:
+        train_dir = str(DATASET_DIRS['midspan_wire_strip_detection'])
+    if epochs is None:
+        epochs = cfg['epochs']
+    if patience is None:
+        patience = cfg['patience']
+    if batch_size is None:
+        batch_size = cfg['batch_size']
+    if learning_rate is None:
+        learning_rate = cfg['learning_rate']
+    if use_focal_loss is None:
+        use_focal_loss = cfg['use_focal_loss']
+    if augmentation_params is None:
+        augmentation_params = cfg['augmentation_params']
+    if geometric_augmentations is None:
+        geometric_augmentations = cfg['geometric_augmentations']
+
+    _validate_yolo_dataset(train_dir)
+    device = torch.device(device) if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else RUNS_DIR / 'midspan_wire_strip_detection'
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    rh = int(resize_height) if resize_height else WIRE_STRIP_RESIZE_HEIGHT
+    rw = int(resize_width) if resize_width else WIRE_STRIP_RESIZE_WIDTH
+    # heatmap tracks the input resolution (they are equal in the deployed 3480x96 config)
+    hh, hw = rh, rw
+    peak_min_distance = max(2, int(round(WIRE_STRIP_PEAK_MIN_DISTANCE * rh / WIRE_STRIP_RESIZE_HEIGHT)))
+    if (rh, rw) != (WIRE_STRIP_RESIZE_HEIGHT, WIRE_STRIP_RESIZE_WIDTH):
+        print(f'[strip] resolution override {rh}x{rw} (config {WIRE_STRIP_RESIZE_HEIGHT}x'
+              f'{WIRE_STRIP_RESIZE_WIDTH}); deploy-eval peak_min_distance={peak_min_distance}')
+
+    image_mean = np.array(IMAGENET_MEAN, dtype=np.float32)
+    image_std = np.array(IMAGENET_STD, dtype=np.float32)
+
+    train_transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((rh, rw)),
+        transforms.ColorJitter(
+            brightness=augmentation_params.get('brightness', 0.1),
+            contrast=augmentation_params.get('contrast', 0.1),
+            saturation=augmentation_params.get('saturation', 0.1),
+            hue=augmentation_params.get('hue', 0.0),
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=image_mean, std=image_std),
+    ])
+    val_transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((rh, rw)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=image_mean, std=image_std),
+    ])
+
+    train_dataset = WireStripDataset(
+        image_dir=Path(f'{train_dir}/images/train'),
+        label_dir=Path(f'{train_dir}/labels/train'),
+        transform=train_transform,
+        geometric_augmentations=geometric_augmentations,
+        resize_height=rh,
+        resize_width=rw,
+        heatmap_height=hh,
+        heatmap_width=hw,
+        min_wires=cfg.get('min_wires', 1),
+        flipud_p=flipud_p,
+        sigma_y=sigma_y,
+        tier_aware=tier_aware,
+        ignore_half_rows=ignore_half_rows,
+        target_mode=target_mode,
+    )
+    val_dataset = WireStripDataset(
+        image_dir=Path(f'{train_dir}/images/val'),
+        label_dir=Path(f'{train_dir}/labels/val'),
+        transform=val_transform,
+        geometric_augmentations=None,
+        resize_height=rh,
+        resize_width=rw,
+        heatmap_height=hh,
+        heatmap_width=hw,
+        min_wires=cfg.get('min_wires', 1),
+        sigma_y=sigma_y,
+        tier_aware=tier_aware,
+        ignore_half_rows=ignore_half_rows,
+        target_mode=target_mode,
+    )
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+
+    model = KeypointDetector(
+        num_keypoints=1,
+        heatmap_size=(hh, hw),
+        weights_path=HRNET_WEIGHTS_PATH,
+    )
+
+    checkpoint_path = checkpoint_dir / 'weights' / 'best.pth'
+    if resume and checkpoint_path.exists():
+        print(f'Resuming training from {checkpoint_path}')
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+    elif resume and not checkpoint_path.exists():
+        print(f'Warning: --resume specified but no checkpoint found at {checkpoint_path}')
+
+    history, best_val_loss, best_val_acc = train_wire_strip_model(
+        model,
+        train_loader,
+        val_loader,
+        num_epochs=epochs,
+        patience=patience,
+        use_focal_loss=use_focal_loss,
+        device=device,
+        checkpoint_dir=checkpoint_dir,
+        learning_rate=learning_rate,
+        peak_min_distance=peak_min_distance,
+        peak_threshold=WIRE_STRIP_PEAK_THRESHOLD,
+        pos_weight=pos_weight,
+        continue_lr=continue_lr,
+    )
+
+    _print_keypoint_training_summary(
+        history, best_val_loss, best_val_acc,
+        checkpoint_dir / 'weights' / 'best.pth', 'Midspan Wire Strip Detection Training',
+    )
     return history, best_val_loss, best_val_acc
 
 
@@ -1489,30 +2029,3 @@ def train_equipment_keypoint_detector(equipment_type: str,
     )
 
 
-def train_attachment_keypoint_detector(attachment_type: str,
-                                       train_dir: Optional[str] = None,
-                                       val_dir: Optional[str] = None,
-                                       epochs: Optional[int] = None,
-                                       patience: Optional[int] = None,
-                                       batch_size: Optional[int] = None,
-                                       learning_rate: Optional[float] = None,
-                                       use_focal_loss: Optional[bool] = None,
-                                       augmentation_params: Optional[Dict] = None,
-                                       geometric_augmentations: Optional[Dict] = None,
-                                       resume: bool = False, device: Optional[str] = None):
-    """Train HRNet model for attachment keypoint detection (comm, down_guy)."""
-    return _train_keypoint_detector_impl(
-        keypoint_type=attachment_type,
-        configs=ATTACHMENT_KEYPOINT_CONFIGS,
-        train_dir=train_dir,
-        val_dir=val_dir,
-        epochs=epochs,
-        patience=patience,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        use_focal_loss=use_focal_loss,
-        augmentation_params=augmentation_params,
-        geometric_augmentations=geometric_augmentations,
-        resume=resume,
-        device=device,
-    )

@@ -2,11 +2,11 @@
 Calculate and update Pole Class and Pole Height based on calibration data.
 
 Workflow:
-1. After calibration, get pole_top_height from photo calibration data
+1. After calibration, fetch pole_top_height from Katapult photofirst_data
 2. Calculate pole_length = ceil(pole_top_height + 6) to nearest 5-ft increment
 3. Get GLC ("Measured Groundline Circumference") from node attributes
 4. Use pole_length + GLC to lookup pole_class and pole_height
-5. Update node attributes with results
+5. Post to Katapult as node attributes
 """
 
 import math
@@ -104,7 +104,7 @@ def prepare_pole_attributes(
     tolerance: float = 0.5
 ) -> Optional[Dict[str, str]]:
     """
-    Prepare pole class and height attributes for upload.
+    Prepare pole class and height attributes for Katapult.
 
     Args:
         pole_top_height_ft: Height of pole top from calibration (feet)

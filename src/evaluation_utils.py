@@ -290,6 +290,10 @@ def initialize_evaluation_metrics() -> Dict[str, Any]:
                 'within_3_inch': 0, 'within_2_inch': 0,
                 'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0
             },
+            'proj_accuracies': {  # per-instance via PROJECTION model (not PPI)
+                'within_3_inch': 0, 'within_2_inch': 0,
+                'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0
+            },
         },
         'pole_top_keypoint': {
             'errors_pixels': [],
@@ -355,16 +359,17 @@ def load_evaluation_ground_truth(
     # - Midspan images (*_Midspan_*): Use midspan GT
     # - Pole images (*_Main): Use pole GT (fallback)
     if location_file_path is None:
-        location_paths = [
-            POLE_LABELS_DIR / f"{base_name}_location.txt",
-            MIDSPAN_LABELS_DIR / f"{base_name}_location.txt",
-        ]
-
-        # Try to find location file in either directory
-        for loc_path in location_paths:
-            if loc_path.exists():
-                location_file_path = loc_path
-                break
+        from . import photo_id_layout as _pil
+        if _pil.ENABLED:
+            cand = _pil.loc_path(POLE_LABELS_DIR, base_name)   # resolves pole|midspan by stem
+            if cand is not None and cand.exists():
+                location_file_path = cand
+        else:
+            for loc_path in (POLE_LABELS_DIR / f"{base_name}_location.txt",
+                             MIDSPAN_LABELS_DIR / f"{base_name}_location.txt"):
+                if loc_path.exists():
+                    location_file_path = loc_path
+                    break
     
     # Initialize ground truth variables
     gt_pole_bbox = None
@@ -430,7 +435,8 @@ def load_evaluation_ground_truth(
         'ruler_label_path': ruler_label_path,
         'ruler_marking_label_path': ruler_marking_label_path,
         'pole_top_label_path': pole_top_label_path,
-        'location_file_path': location_file_path
+        'location_file_path': location_file_path,
+        'img_height': img_height,
     }
 
 
@@ -723,6 +729,29 @@ def evaluate_single_image(
                         metrics['ruler_marking_keypoints']['accuracies'][threshold_map[threshold]] += 1
                 if all(e <= 1.0 for e in kp_errors_in):
                     current_image_ruler_errors.append(max(kp_errors_in))
+
+        # Per-instance PCK via the PROJECTION model (ruler-marker GT anchors), NOT PPI.
+        # Calibration success := ALL ruler markers within tolerance under the projective
+        # pixel->inch curve fit from this photo's ruler anchors.
+        from .height_calculations import fit_height_from_location_file, vertical_error_inches
+        loc_path = ground_truth.get('location_file_path')
+        img_h = ground_truth.get('img_height')
+        fit = fit_height_from_location_file(loc_path) if loc_path else None
+        if fit is not None and img_h:
+            threshold_map = {3.0: 'within_3_inch', 2.0: 'within_2_inch',
+                             1.0: 'within_1_inch', 0.5: 'within_0_5_inch'}
+            proj_errs = []
+            for height, kp_gt in gt_keypoints_global.items():
+                kp_pred = pred_by_height.get(height)
+                if kp_pred is not None:
+                    e = vertical_error_inches(fit, kp_pred['y'], kp_gt['y'], img_h, None)
+                    if e is not None:
+                        proj_errs.append(e)
+            metrics['ruler_marking_keypoints']['proj_accuracies']['total'] += 1
+            if len(proj_errs) == len(gt_keypoints_global):
+                for threshold in [3.0, 2.0, 1.0, 0.5]:
+                    if all(e <= threshold for e in proj_errs):
+                        metrics['ruler_marking_keypoints']['proj_accuracies'][threshold_map[threshold]] += 1
     
     # Validate BB detections
     pole_top_label_path = ground_truth['pole_top_label_path']
@@ -1221,6 +1250,12 @@ def run_full_evaluation(
         pck_3, pck_2, pck_1, pck_05 = calculate_pck_percentages(rm_kp['kp_accuracies'])
         # Per-instance PCK (pie chart): ALL markings within threshold
         inst_pck_3, inst_pck_2, inst_pck_1, inst_pck_05 = calculate_pck_percentages(rm_kp['accuracies'])
+        # Per-instance PCK via the PROJECTION model (calibration success, not PPI)
+        proj_acc = rm_kp.get('proj_accuracies', {})
+        if proj_acc.get('total'):
+            proj_pck_3, proj_pck_2, proj_pck_1, proj_pck_05 = calculate_pck_percentages(proj_acc)
+        else:
+            proj_pck_3 = proj_pck_2 = proj_pck_1 = proj_pck_05 = None
 
         iou_mean = float(np.mean(det_metrics['iou_scores'])) if det_metrics['iou_scores'] else 0.0
         map_50 = calculate_map(det_metrics['pred_boxes_list'], det_metrics['gt_boxes_list'], iou_threshold=0.5)
@@ -1249,6 +1284,9 @@ def run_full_evaluation(
                 'pck_3_inch': pck_3, 'pck_2_inch': pck_2, 'pck_1_inch': pck_1, 'pck_0_5_inch': pck_05,
                 'instance_pck_3_inch': inst_pck_3, 'instance_pck_2_inch': inst_pck_2,
                 'instance_pck_1_inch': inst_pck_1, 'instance_pck_0_5_inch': inst_pck_05,
+                'total_instances_proj': proj_acc.get('total', 0),
+                'instance_pck_3_inch_proj': proj_pck_3, 'instance_pck_2_inch_proj': proj_pck_2,
+                'instance_pck_1_inch_proj': proj_pck_1, 'instance_pck_0_5_inch_proj': proj_pck_05,
                 'mean_error_pixels': float(np.mean(rm_errors)) if rm_errors else 0.0,
                 'mean_error_inches': float(np.mean(rm_errors_inch)) if rm_errors_inch else None,
                 'median_error_inches': float(np.median(rm_errors_inch)) if rm_errors_inch else None,

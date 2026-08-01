@@ -56,13 +56,83 @@ from .evaluation_utils import (
     calculate_pck_percentages,
     is_point_in_bbox,
 )
-from .visualization import parse_yolo_label, parse_keypoint_label
 from .data_utils import (
     parse_equipment_with_keypoints,
     parse_attachments_with_keypoints,
     load_ppi_from_label,
     get_e2e_test_images,
 )
+from .height_calculations import vertical_error_inches, fit_height_from_location_file
+from . import photo_id_layout as _pil
+
+
+
+def parse_yolo_label(label_path: Path, img_width: int, img_height: int) -> List[Dict]:
+    """Parse YOLO format label file (class x_center y_center width height).
+
+    (Moved from the deleted src/visualization.py — pure parsing, no display.)
+    Returns a list of dicts with 'class_id' and 'bbox' [x1, y1, x2, y2] keys.
+    """
+    boxes = []
+    if not label_path.exists():
+        return boxes
+
+    with open(label_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split()
+            if len(parts) >= 5:
+                class_id = int(parts[0])
+                x_center = float(parts[1]) * img_width
+                y_center = float(parts[2]) * img_height
+                width = float(parts[3]) * img_width
+                height = float(parts[4]) * img_height
+
+                x1 = int(x_center - width / 2)
+                y1 = int(y_center - height / 2)
+                x2 = int(x_center + width / 2)
+                y2 = int(y_center + height / 2)
+
+                boxes.append({
+                    'class_id': class_id,
+                    'bbox': [x1, y1, x2, y2]
+                })
+    return boxes
+
+
+def parse_keypoint_label(label_path: Path, img_width: int, img_height: int) -> List[Dict]:
+    """Parse keypoint label file (class x_c y_c w h x1 y1 v1 x2 y2 v2 ...).
+
+    (Moved from the deleted src/visualization.py — pure parsing, no display.)
+    Returns a list of dicts with 'x', 'y', and 'visibility' keys.
+    """
+    keypoints = []
+    if not label_path.exists():
+        return keypoints
+
+    with open(label_path, 'r') as f:
+        lines = f.readlines()
+        # Skip PPI comment line if present
+        data_line = lines[0] if not lines[0].startswith('#') else lines[1] if len(lines) > 1 else ''
+
+        if data_line:
+            parts = data_line.strip().split()
+            if len(parts) >= 5:
+                # Skip bbox info (first 5 values), remaining are x y visibility triples
+                for i in range(5, len(parts), 3):
+                    if i + 2 < len(parts):
+                        x = float(parts[i]) * img_width
+                        y = float(parts[i + 1]) * img_height
+                        visibility = int(parts[i + 2])
+                        if visibility > 0:  # Only add visible keypoints
+                            keypoints.append({
+                                'x': int(x),
+                                'y': int(y),
+                                'visibility': visibility
+                            })
+    return keypoints
 
 
 def _load_attachment_models(device):
@@ -208,8 +278,8 @@ def _run_e2e_single_image(
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     h_img, w_img = img_rgb.shape[:2]
 
-    lbl_path = POLE_LABELS_DIR / f"{img_path.stem}_location.txt"
-    ppi = load_ppi_from_label(lbl_path) if lbl_path.exists() else None
+    lbl_path = _pil.loc_path(POLE_LABELS_DIR, img_path.stem)
+    ppi = load_ppi_from_label(lbl_path) if (lbl_path and lbl_path.exists()) else None
 
     pole_res = pole_detector(img_bgr, conf=pole_conf, max_det=1, verbose=False, imgsz=960)[0]
     if pole_res.boxes is None or len(pole_res.boxes) == 0:
@@ -254,8 +324,8 @@ def run_e2e_annotation_single_image(
         return [], [], None
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-    lbl_path = POLE_LABELS_DIR / f"{img_path.stem}_location.txt"
-    ppi = load_ppi_from_label(lbl_path) if lbl_path.exists() else None
+    lbl_path = _pil.loc_path(POLE_LABELS_DIR, img_path.stem)
+    ppi = load_ppi_from_label(lbl_path) if (lbl_path and lbl_path.exists()) else None
 
     pole_res = pole_detector(img_bgr, conf=pole_conf, max_det=1, verbose=False, imgsz=960)[0]
     if pole_res.boxes is None or len(pole_res.boxes) == 0:
@@ -583,9 +653,11 @@ def _run_all_inference(
             img_path, pole_detector, detector, kp_models, device,
             conf_thresh, imgsz, class_names,
         )
-        lbl_path = POLE_LABELS_DIR / f"{img_path.stem}_location.txt"
-        gt = gt_parser(lbl_path) if lbl_path.exists() else []
-        results.append({'preds': preds, 'ppi': ppi, 'h': h, 'w': w, 'gt': gt})
+        lbl_path = _pil.loc_path(POLE_LABELS_DIR, img_path.stem)
+        _have = lbl_path is not None and lbl_path.exists()
+        gt = gt_parser(lbl_path) if _have else []
+        fit = fit_height_from_location_file(lbl_path) if _have else None
+        results.append({'preds': preds, 'ppi': ppi, 'h': h, 'w': w, 'gt': gt, 'fit': fit})
     return results
 
 
@@ -604,10 +676,11 @@ def _compute_class_metrics(
     pred_boxes_list = [[] for _ in range(n)]
     gt_boxes_list = [[] for _ in range(n)]
     iou_scores = []
-    _thresh_keys = [(3.0, 'within_3_inch'), (2.0, 'within_2_inch'), (1.0, 'within_1_inch'), (0.5, 'within_0_5_inch')]
-    kp_acc = {'within_3_inch': 0, 'within_2_inch': 0, 'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0}
-    instance_acc = {'within_3_inch': 0, 'within_2_inch': 0, 'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0}
+    _thresh_keys = [(4.0, 'within_4_inch'), (3.0, 'within_3_inch'), (2.0, 'within_2_inch'), (1.0, 'within_1_inch'), (0.5, 'within_0_5_inch')]
+    kp_acc = {'within_4_inch': 0, 'within_3_inch': 0, 'within_2_inch': 0, 'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0}
+    instance_acc = {'within_4_inch': 0, 'within_3_inch': 0, 'within_2_inch': 0, 'within_1_inch': 0, 'within_0_5_inch': 0, 'total': 0}
     errors_px = []
+    errors_in = []  # projection-model (or PPI-fallback) vertical error in inches
     valid_bb_count = 0  # GT instances where any pred bbox encloses ALL GT keypoints
 
     for img_idx, r in enumerate(cached_results):
@@ -671,7 +744,10 @@ def _compute_class_metrics(
                     pred_kp = best_pred['keypoints'][ki]
                     err_px = abs(pred_kp['y'] - gt_y)  # Vertical distance (PCK uses vertical error)
                     errors_px.append(err_px)
-                    err_in = err_px / ppi_val if ppi_val > 0 else err_px
+                    # Inches via the central projection model (per-photo ruler fit),
+                    # falling back to the PPI scalar when the photo has no fit.
+                    err_in = vertical_error_inches(r.get('fit'), pred_kp['y'], gt_y, h, ppi_val)
+                    errors_in.append(err_in)
                     kp_errors_in.append(err_in)
                     # Per-keypoint: each keypoint evaluated independently
                     for thresh, key in _thresh_keys:
@@ -707,7 +783,12 @@ def _compute_class_metrics(
     pck_3, pck_2, pck_1, pck_05 = calculate_pck_percentages(kp_acc)
     # Per-instance PCK (pie chart): ALL keypoints must be within threshold
     inst_pck_3, inst_pck_2, inst_pck_1, inst_pck_05 = calculate_pck_percentages(instance_acc)
-    errors_inch = [e / PPI_FALLBACK for e in errors_px] if errors_px else []
+    # 4-inch tolerance (inline; calculate_pck_percentages has a fixed 4-tuple signature)
+    pck_4 = 100.0 * kp_acc['within_4_inch'] / max(1, kp_acc['total'])
+    inst_pck_4 = 100.0 * instance_acc['within_4_inch'] / max(1, instance_acc['total'])
+    # Reported errors are the same projection-model inches used for the PCK thresholds
+    # (was previously a fixed-PPI rescale of the pixel errors, inconsistent with PCK).
+    errors_inch = errors_in if errors_in else []
 
     return {
         'detection': {
@@ -723,7 +804,8 @@ def _compute_class_metrics(
             'valid_rate_percent': valid_rate,
         },
         'keypoint': {
-            'pck_3_inch': pck_3, 'pck_2_inch': pck_2, 'pck_1_inch': pck_1, 'pck_0_5_inch': pck_05,
+            'pck_4_inch': pck_4, 'pck_3_inch': pck_3, 'pck_2_inch': pck_2, 'pck_1_inch': pck_1, 'pck_0_5_inch': pck_05,
+            'instance_pck_4_inch': inst_pck_4,
             'instance_pck_3_inch': inst_pck_3, 'instance_pck_2_inch': inst_pck_2,
             'instance_pck_1_inch': inst_pck_1, 'instance_pck_0_5_inch': inst_pck_05,
             'mean_error_inches': float(np.mean(errors_inch)) if errors_inch else None,
@@ -760,12 +842,14 @@ def _run_all_inference_combined(
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         h_img, w_img = img_rgb.shape[:2]
 
-        lbl_path = POLE_LABELS_DIR / f"{img_path.stem}_location.txt"
-        ppi = load_ppi_from_label(lbl_path) if lbl_path.exists() else None
-        equip_gt = parse_equipment_with_keypoints(lbl_path) if lbl_path.exists() else []
+        lbl_path = _pil.loc_path(POLE_LABELS_DIR, img_path.stem)
+        _have = lbl_path is not None and lbl_path.exists()
+        ppi = load_ppi_from_label(lbl_path) if _have else None
+        equip_gt = parse_equipment_with_keypoints(lbl_path) if _have else []
         attach_gt = parse_attachments_with_keypoints(lbl_path) if lbl_path.exists() else []
+        fit = fit_height_from_location_file(lbl_path) if lbl_path.exists() else None
 
-        base = {'ppi': ppi, 'h': h_img, 'w': w_img}
+        base = {'ppi': ppi, 'h': h_img, 'w': w_img, 'fit': fit}
 
         pole_res = pole_detector(img_bgr, conf=INFERENCE_POLE_CONF_THRESHOLD, max_det=1, verbose=False, imgsz=960)[0]
         if pole_res.boxes is None or len(pole_res.boxes) == 0:

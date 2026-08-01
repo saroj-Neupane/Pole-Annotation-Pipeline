@@ -1,0 +1,14 @@
+# Web application
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# ONNX SDK inference (no torch, no training libs)
+numpy>=1.26,<3
+onnxruntime>=1.18,<2
+opencv-python-headless>=4.9,<5
+Pillow>=10,<12
+
+# Weight download from the HF model repo at startup
+huggingface_hub>=0.23

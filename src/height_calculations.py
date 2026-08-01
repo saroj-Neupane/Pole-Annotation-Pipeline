@@ -7,7 +7,8 @@ Provides utilities for:
 - Ground and ruler top coordinate calculation
 """
 
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 
 def linear_interpolate_height(target_height: float, height_measurements: Dict) -> Optional[Dict]:
@@ -127,3 +128,91 @@ def calculate_ppi_from_measurements(height_measurements: Dict, image_height_px: 
 
     # Return average PPI
     return sum(ppi_values) / len(ppi_values)
+
+
+# --------------------------------------------------------------------------- #
+# Projection model (single source of truth for pixel -> height in inches)
+#
+# A single PPI scalar assumes the percentY -> height curve is a straight line, but
+# the ruler is a camera projection, so the true curve is projective (rational). The
+# canonical fit lives in src/ruler_height_model.py; the helpers below are the ONE
+# place that loads a photo's ruler anchors and turns a pixel position (or a pair of
+# them) into a physically-consistent height in inches. Both the wire tracer and the
+# keypoint/PCK metrics go through here, so height is computed identically everywhere.
+# --------------------------------------------------------------------------- #
+
+# The 5 real Katapult ruler anchors (feet). 0.0 (ground) / 17.0 (ruler top) are
+# extrapolated by extract_height and excluded — the projective fit is validated on
+# exactly these (matches the SDK's iter_photo_calibration_anchors).
+RULER_ANCHOR_FEET = (2.5, 6.5, 10.5, 14.5, 16.5)
+
+_HEIGHT_FIT_CACHE: Dict[str, object] = {}
+
+
+def load_height_anchors(label_path: Union[str, Path]) -> List[Tuple[float, float]]:
+    """Parse the 5 ruler anchors from a ``*_location.txt`` as ``(percentY, inches)``.
+
+    Anchor lines are ``height_ft, percentX, percentY``; only the real
+    :data:`RULER_ANCHOR_FEET` rows are kept. Returns ``[]`` when none are present.
+    """
+    label_path = Path(label_path)
+    if not label_path.exists():
+        return []
+    anchors: List[Tuple[float, float]] = []
+    for line in label_path.read_text().splitlines():
+        parts = line.split(",")
+        if len(parts) < 3:
+            continue
+        try:
+            ft = float(parts[0])
+            py = float(parts[2])
+        except ValueError:
+            continue
+        if ft in RULER_ANCHOR_FEET:
+            anchors.append((py, ft * 12.0))  # (percentY 0-100, inches)
+    return anchors
+
+
+def fit_height_from_location_file(label_path: Union[str, Path]):
+    """Cached projective ``percentY -> inches`` :class:`HeightFit` for a photo, or None.
+
+    Central entry point: parses the ruler anchors and fits the canonical projective
+    model (:func:`src.ruler_height_model.fit_photo_height`). Returns ``None`` when the
+    photo has no fittable ruler (callers fall back to a PPI scalar / percent band).
+    """
+    from src.ruler_height_model import fit_photo_height
+
+    key = str(label_path)
+    if key in _HEIGHT_FIT_CACHE:
+        return _HEIGHT_FIT_CACHE[key]
+    anchors = load_height_anchors(label_path)
+    fit = fit_photo_height(anchors) if anchors else None
+    _HEIGHT_FIT_CACHE[key] = fit
+    return fit
+
+
+def vertical_error_inches(
+    fit,
+    y1_px: float,
+    y2_px: float,
+    image_height_px: float,
+    ppi: Optional[float] = None,
+) -> Optional[float]:
+    """Vertical distance in inches between two pixel-Y positions.
+
+    Preferred path: the projection model — converts each pixel-Y to percentY
+    (``y / image_height_px * 100``), reads its height in inches via ``fit``, and
+    returns ``|h1 - h2|``. This captures the within-photo perspective nonlinearity a
+    single PPI scalar cannot. Falls back to ``|y1 - y2| / ppi`` when there is no fit
+    (or the fit is non-physical at a point), and to raw pixels as a last resort.
+    """
+    if fit is not None and image_height_px and image_height_px > 0:
+        from src.ruler_height_model import height_in_at
+
+        h1 = height_in_at(fit, y1_px / image_height_px * 100.0)
+        h2 = height_in_at(fit, y2_px / image_height_px * 100.0)
+        if h1 is not None and h2 is not None:
+            return abs(h1 - h2)
+    if ppi and ppi > 0:
+        return abs(y1_px - y2_px) / ppi
+    return abs(y1_px - y2_px)
